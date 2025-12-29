@@ -87,6 +87,7 @@ export default function App() {
   const firstTrackId = useMemo(() => ALL_TRACKS[0]!.id, [])
   const [currentTrackId, setCurrentTrackId] = useState<string>(firstTrackId)
   const [showTrackSelect, setShowTrackSelect] = useState(false)
+  const [paused, setPaused] = useState(false)
 
   const completedIds = useMemo(() => (typeof window !== 'undefined' ? loadCompletedTrackIds() : new Set<string>()), [])
   const [completedToken, setCompletedToken] = useState(0)
@@ -155,6 +156,7 @@ export default function App() {
       setShowNamePrompt(false)
       setPendingScoreMs(null)
       handledFinishRef.current = false
+      setPaused(false)
     },
     [],
   )
@@ -162,7 +164,8 @@ export default function App() {
   const startRunIfNeeded = useCallback(() => {
     const s = stateRef.current
     if (!s) return
-    startRun(s)
+    const started = startRun(s)
+    if (!started) return
     handledFinishRef.current = false
 
     setHud((h) => ({
@@ -208,6 +211,7 @@ export default function App() {
     setShowNamePrompt(false)
     setPendingScoreMs(null)
     handledFinishRef.current = false
+    setPaused(false)
   }, [track])
 
   const nextTrack = useCallback(() => {
@@ -218,6 +222,7 @@ export default function App() {
     const { unlocked } = getUnlockedSet()
     if (!unlocked.has(next.id)) return
     setCurrentTrackId(next.id)
+    setPaused(false)
   }, [currentTrackId, getUnlockedSet, initRunForTrack])
 
   const selectTrack = useCallback(
@@ -226,6 +231,7 @@ export default function App() {
       if (!unlocked.has(id)) return
       setCurrentTrackId(id)
       setShowTrackSelect(false)
+      setPaused(false)
     },
     [getUnlockedSet, initRunForTrack],
   )
@@ -235,6 +241,7 @@ export default function App() {
     const onDown = (e: PointerEvent) => {
       const s = stateRef.current
       if (!s) return
+      if (paused) return
       if (s.dead || s.finished) return
       if (s.input.thrustPointerId != null) return
       startRunIfNeeded()
@@ -257,7 +264,7 @@ export default function App() {
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
     }
-  }, [startRunIfNeeded])
+  }, [paused, startRunIfNeeded])
 
   // Keyboard fallback.
   useEffect(() => {
@@ -265,6 +272,7 @@ export default function App() {
       if (e.key !== ' ' && e.code !== 'Space') return
       const s = stateRef.current
       if (!s) return
+      if (paused) return
       if (s.dead || s.finished) return
       if (isDown) startRunIfNeeded()
       s.input.thrust = isDown
@@ -278,7 +286,23 @@ export default function App() {
       window.removeEventListener('keydown', down)
       window.removeEventListener('keyup', up)
     }
-  }, [startRunIfNeeded])
+  }, [paused, startRunIfNeeded])
+
+  // Pause toggle (Escape)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      setPaused((p) => !p)
+      const s = stateRef.current
+      if (s) {
+        s.input.thrust = false
+        s.input.thrustPointerId = null
+      }
+    }
+    window.addEventListener('keydown', onKey, { passive: false })
+    return () => window.removeEventListener('keydown', onKey as any)
+  }, [])
 
   // Main loop (sim + draw).
   useEffect(() => {
@@ -324,9 +348,11 @@ export default function App() {
       const dtSec = Math.min(0.05, (now - last) / 1000)
       last = now
 
-      stepSim(s, dtSec)
-      updateRunCamera(s)
-      applyCameraDeath(s)
+      if (!paused) {
+        stepSim(s, dtSec)
+        updateRunCamera(s)
+        applyCameraDeath(s)
+      }
 
       // If we finished and it’s a new best, persist best time + ghost (positions).
       // Finish handling: run exactly once per finish. If this run is the new best time,
@@ -389,7 +415,6 @@ export default function App() {
         hudBucketRef.current = bucket
         const r = s.result
         const speedPxPerSec = Math.hypot(s.disc.v.x, s.disc.v.y)
-        // Scale so ~2200 px/s reads as ~220 mph (matches our camera tuning range).
         const speedMph = Math.round(speedPxPerSec / 10)
         setHud({
           timeMs: s.timeMs,
@@ -413,7 +438,7 @@ export default function App() {
       window.visualViewport?.removeEventListener('resize', resize)
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
     }
-  }, [track])
+  }, [paused, track])
 
   // Keep top times in sync when track changes.
   useEffect(() => {
@@ -421,7 +446,8 @@ export default function App() {
     setTopTimes(loadTopTimes(track.id))
   }, [track.id, completedToken])
 
-  const showOverlay = hud.dead || hud.finished
+  const showOverlay = (hud.dead || hud.finished) && !showTrackSelect
+  const showPause = paused && !showTrackSelect && !showOverlay
 
   return (
     <div className="sl-viewport">
@@ -430,53 +456,51 @@ export default function App() {
           <div className="sl-arena">
             <canvas ref={canvasRef} className="sl-canvas" />
 
-            <div className="hudTop">
-              <div className="hudPill" aria-label="Run HUD">
-                <span className="hudKvp">
-                  <span className="k">Time</span>
-                  <span className="v">{fmtMs(hud.timeMs)}</span>
-                </span>
-                <span className="hudKvp">
-                  <span className="k">Jet</span>
-                  <span className="v">{Math.round(hud.energy * 100)}%</span>
-                </span>
-                <span className="hudKvp">
-                  <span className="k">MPH</span>
-                  <span className="v">{hud.speedMph}</span>
-                </span>
-                {hud.coinsTotal > 0 && (
-                  <span className="hudKvp">
-                    <span className="k">Coins</span>
-                    <span className="v">
-                      {hud.coins}/{hud.coinsTotal}
-                    </span>
-                  </span>
-                )}
-                <span className="hudKvp">
-                  <span className="k">Track</span>
-                  <span className="v" style={{ letterSpacing: '0.01em' }}>
-                    {track.name}
-                  </span>
-                </span>
+            <div className="hudRace" aria-label="Racing HUD">
+              <div className="hudTimeCard" aria-label="Timer">
+                <div className="hudMajorLabel">TIME</div>
+                <div className="hudMajorValue">{fmtMs(hud.timeMs)}</div>
               </div>
 
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
+              <div className="hudSpeedCard" aria-label="Speed">
+                <div className="hudMajorLabel">SPEED</div>
+                <div className="hudSpeedValue">
+                  <span className="hudSpeedNum">{hud.speedMph}</span>
+                  <span className="hudSpeedUnit">mph</span>
+                </div>
+              </div>
+
+              <div className="hudMetaCard" aria-label="Meta">
+                <div className="hudMetaRow">
+                  <span className="hudMetaKey">Track</span>
+                  <span className="hudMetaVal" title={track.name}>
+                    {track.name}
+                  </span>
+                </div>
                 {hud.bestTimeMs != null && (
-                  <div className="hudPill" aria-label="Best time">
-                    <span className="hudKvp">
-                      <span className="k">Best</span>
-                      <span className="v">{fmtMs(hud.bestTimeMs)}</span>
+                  <div className="hudMetaRow">
+                    <span className="hudMetaKey">Best</span>
+                    <span className="hudMetaVal">{fmtMs(hud.bestTimeMs)}</span>
+                  </div>
+                )}
+                {hud.coinsTotal > 0 && (
+                  <div className="hudMetaRow">
+                    <span className="hudMetaKey">Coins</span>
+                    <span className="hudMetaVal">
+                      {hud.coins}/{hud.coinsTotal}
                     </span>
                   </div>
                 )}
-                <button type="button" className="hudBtn" onClick={restart}>
-                  Restart
-                </button>
-                <button type="button" className="hudBtn" onClick={nextTrack}>
-                  Next
-                </button>
-                <button type="button" className="hudBtn" onClick={() => setShowTrackSelect(true)}>
-                  Tracks
+              </div>
+
+              <div className="hudControls" aria-label="Controls">
+                <button
+                  type="button"
+                  className="hudBtn"
+                  onClick={() => setPaused(true)}
+                  aria-label="Pause"
+                >
+                  Pause
                 </button>
               </div>
             </div>
@@ -562,6 +586,61 @@ export default function App() {
                       onClick={restart}
                     >
                       Restart
+                    </button>
+                    <button type="button" className="btn" onClick={nextTrack}>
+                      Next
+                    </button>
+                    <button type="button" className="btn ghost" onClick={() => setShowTrackSelect(true)}>
+                      Tracks
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {showPause && (
+              <div className="overlay" role="dialog" aria-label="Paused">
+                <div className="panel">
+                  <div className="panelTitle">Paused</div>
+                  <div className="panelBody">
+                    <div>
+                      <strong>Time:</strong> {fmtMs(hud.timeMs)}
+                    </div>
+                    {hud.coinsTotal > 0 && (
+                      <div>
+                        <strong>Coins:</strong> {hud.coins}/{hud.coinsTotal}
+                      </div>
+                    )}
+                    {topTimes.length > 0 && (
+                      <div style={{ marginTop: '0.8rem' }}>
+                        <strong>Top Times</strong>
+                        <ol style={{ margin: '0.35rem 0 0', padding: 0, listStyle: 'none', display: 'grid', gap: '0.25rem' }}>
+                          {topTimes.map((e, i) => (
+                            <li
+                              key={`${e.ts}-${i}`}
+                              style={{ display: 'grid', gridTemplateColumns: '1.5rem 1fr auto', gap: '0.55rem', alignItems: 'baseline' }}
+                            >
+                              <span style={{ opacity: 0.75 }}>{i + 1}</span>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
+                              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtMs(e.timeMs)}</span>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+                    )}
+                  </div>
+                  <div className="panelActions">
+                    <button type="button" className="btn ghost" onClick={() => setPaused(false)}>
+                      Resume
+                    </button>
+                    <button type="button" className="btn" onClick={restart}>
+                      Restart
+                    </button>
+                    <button type="button" className="btn" onClick={nextTrack}>
+                      Next
+                    </button>
+                    <button type="button" className="btn ghost" onClick={() => setShowTrackSelect(true)}>
+                      Tracks
                     </button>
                   </div>
                 </div>

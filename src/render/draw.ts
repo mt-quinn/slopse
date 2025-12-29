@@ -1,6 +1,7 @@
 import type { RunState } from '../game/state'
 import { clamp } from '../game/math'
 import { sampleGhostAt } from '../game/sim'
+import { JET_MAX_ENERGY } from '../game/tuning'
 
 const withDpr = (ctx: CanvasRenderingContext2D, dpr: number, fn: () => void) => {
   ctx.save()
@@ -206,6 +207,54 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     }
 
     ctx.restore() // camera
+
+    // Player-attached HUD elements
+    {
+      const p = s.disc.p
+      const sx = (p.x - s.camera.x) * zoom + w / 2
+      const sy = (p.y - s.camera.y) * zoom + h / 2
+
+      // Jet meter (only when not full): to the left of the player
+      if (JET_MAX_ENERGY > 0 && s.jet.energy < JET_MAX_ENERGY - 1e-4) {
+        const frac = clamp(s.jet.energy / JET_MAX_ENERGY, 0, 1)
+        const barH = 46
+        const barW = 10
+        const bx = sx - 42
+        const by = sy - barH / 2
+        ctx.save()
+        ctx.globalCompositeOperation = 'source-over'
+        // background
+        ctx.fillStyle = 'rgba(10, 8, 22, 0.62)'
+        ctx.strokeStyle = 'rgba(255,255,255,0.12)'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        const r = 6
+        ctx.moveTo(bx + r, by)
+        ctx.arcTo(bx + barW, by, bx + barW, by + barH, r)
+        ctx.arcTo(bx + barW, by + barH, bx, by + barH, r)
+        ctx.arcTo(bx, by + barH, bx, by, r)
+        ctx.arcTo(bx, by, bx + barW, by, r)
+        ctx.closePath()
+        ctx.fill()
+        ctx.stroke()
+
+        // fill
+        const fillH = Math.max(0, (barH - 4) * frac)
+        const fx = bx + 2
+        const fy = by + (barH - 2) - fillH
+        ctx.fillStyle = 'rgba(120, 180, 255, 0.85)'
+        ctx.beginPath()
+        const fr = 4
+        ctx.moveTo(fx + fr, fy)
+        ctx.arcTo(fx + (barW - 4), fy, fx + (barW - 4), fy + fillH, fr)
+        ctx.arcTo(fx + (barW - 4), fy + fillH, fx, fy + fillH, fr)
+        ctx.arcTo(fx, fy + fillH, fx, fy, fr)
+        ctx.arcTo(fx, fy, fx + (barW - 4), fy, fr)
+        ctx.closePath()
+        ctx.fill()
+        ctx.restore()
+      }
+    }
 
     // Screen-space prompt
     if (!s.runStarted && !s.dead && !s.finished) {

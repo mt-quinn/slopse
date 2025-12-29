@@ -1,6 +1,7 @@
 import { clamp, dot, len, mul, normalize, sub, type Vec2 } from './math'
 import type { RunState } from './state'
 import { coinHit, closestPointOnSegment, querySegIndicesAabb, segNormalUp } from './track'
+import { JET_MAX_ENERGY } from './tuning'
 
 const GRAVITY = 1400 // px/s^2
 const JET_ACCEL = 1650 // px/s^2 upwards when thrusting
@@ -61,7 +62,7 @@ export const stepSim = (s: RunState, dtSecRaw: number) => {
     if (thrusting) {
       ay -= JET_ACCEL
       // Drain energy in air or on ground alike; only recharge on ground (per spec).
-      s.jet.energy = clamp(s.jet.energy - h * 0.55, 0, 1)
+      s.jet.energy = clamp(s.jet.energy - h * 0.55, 0, JET_MAX_ENERGY)
     }
 
     // Integrate velocity.
@@ -181,7 +182,7 @@ export const stepSim = (s: RunState, dtSecRaw: number) => {
 
     // Ground recharge for jet energy (Noita-style: only when grounded).
     if (disc.grounded) {
-      s.jet.energy = clamp(s.jet.energy + h * 1.35, 0, 1)
+      s.jet.energy = clamp(s.jet.energy + h * 1.35, 0, JET_MAX_ENERGY)
     }
 
     // Coin pickup.

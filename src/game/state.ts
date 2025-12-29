@@ -1,5 +1,6 @@
 import { trackBounds, type TrackDef } from './track'
 import type { Vec2 } from './math'
+import { JET_MAX_ENERGY } from './tuning'
 
 export type ViewState = {
   width: number
@@ -122,7 +123,7 @@ export const createInitialRunState = (track: TrackDef): RunState => {
       groundN: { x: 0, y: -1 },
       groundBlend: 0,
     },
-    jet: { energy: 1, draining: false },
+    jet: { energy: JET_MAX_ENERGY, draining: false },
     coinsCollected: new Set(),
     bestTimeMs: null,
     bestGhost: null,

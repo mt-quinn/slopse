@@ -1,8 +1,9 @@
 import type { RunState } from './state'
+import { JET_MAX_ENERGY } from './tuning'
 
 // Shared run start behavior (must match gameplay + editor playtest).
 export const startRun = (s: RunState) => {
-  if (s.runStarted) return
+  if (s.runStarted) return false
 
   // Launch + start timer/recording on first interaction.
   s.runStarted = true
@@ -18,8 +19,9 @@ export const startRun = (s: RunState) => {
   s.recording.samples = []
   s.recording.nextSampleT = 0
   s.coinsCollected.clear()
-  s.jet.energy = 1
+  s.jet.energy = JET_MAX_ENERGY
   s.ghostPlayback.t = 0
+  return true
 }
 
 
