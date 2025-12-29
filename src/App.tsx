@@ -278,6 +278,7 @@ export default function App() {
       canvas.style.width = `${w}px`
       canvas.style.height = `${h}px`
       const s = stateRef.current
+      if (!s) return
       s.view.dpr = dpr
       s.view.width = w
       s.view.height = h
@@ -288,6 +289,7 @@ export default function App() {
 
     const updateCamera = () => {
       const s = stateRef.current
+      if (!s) return
       const v = s.disc.v
       const speed = Math.hypot(v.x, v.y)
       const baseZoom = 1
