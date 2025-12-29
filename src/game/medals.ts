@@ -104,7 +104,10 @@ const runPolicyOnce = (track: TrackDef, pol: Policy, seed: number) => {
   const noise = () => (rand() * 2 - 1) * 0.07
 
   const dt = 1 / 120
-  const maxSec = 120
+  // Give long / slow tracks enough time to finish during estimation.
+  const minSec = 120
+  const estSec = track.finishX / 110 // px / (px/s) ~= seconds (conservative)
+  const maxSec = Math.max(minSec, Math.min(220, estSec * 1.6 + 25))
   const steps = Math.floor(maxSec / dt)
 
   // Sample the resulting “line” so we can place coins on it later.
@@ -128,7 +131,7 @@ const runPolicyOnce = (track: TrackDef, pol: Policy, seed: number) => {
     // If we’re catastrophically off course, abort.
     // Allow large airborne gaps (deep valleys / big launches) so we don't incorrectly fail.
     const probe = closestPointOnTrack(track.id, s.disc.p, track.segments)
-    if (probe.dist > 2600) return null
+    if (probe.dist > 4200) return null
   }
 
   if (!s.finished) return null
@@ -158,12 +161,15 @@ export const estimateIdealLine = (track: TrackDef, opts?: { budget?: number; see
 
   for (let i = 0; i < budget; i++) {
     // Sample a family of “strong player” policies.
-    const gap = 26 + rand() * 120
-    const kp = 0.9 + rand() * 2.2
-    const kv = 0.10 + rand() * 0.55
-    const lookaheadSec = 0.10 + rand() * 0.35
-    const onThresh = 0.35 + rand() * 0.85
-    const offThresh = -0.20 - rand() * 0.65
+    // Mix “hug the ground” (usually fastest) and “float” (safer) families.
+    const hug = rand() < 0.62
+    const gap = hug ? 6 + rand() * 42 : 26 + rand() * 120
+    const kp = hug ? 0.25 + rand() * 2.1 : 0.9 + rand() * 2.2
+    const kv = hug ? 0.02 + rand() * 0.28 : 0.10 + rand() * 0.55
+    const lookaheadSec = hug ? 0.06 + rand() * 0.22 : 0.10 + rand() * 0.35
+    // Make thrust rarer in hug mode (generally faster for our physics).
+    const onThresh = hug ? 1.0 + rand() * 2.2 : 0.35 + rand() * 0.85
+    const offThresh = hug ? -0.9 - rand() * 1.4 : -0.20 - rand() * 0.65
 
     const pol: Policy = { gap, kp, kv, lookaheadSec, onThresh, offThresh }
     const line = runPolicyOnce(track, pol, seedBase ^ (i * 0x9e3779b9))

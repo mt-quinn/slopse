@@ -24,10 +24,14 @@ const run = () => {
     if (!track) continue
 
     // Compute ideal line (fastest found) and derive medals + coins.
-    const line = estimateIdealLine(track, { budget: 220, seed: 1337 })
-    if (!line) {
-      throw new Error(`Failed to estimate ideal line for ${track.id}`)
-    }
+    const tryEstimate = (budget: number, seed: number) => estimateIdealLine(track, { budget, seed })
+
+    // First pass: fast-ish.
+    let line = tryEstimate(220, 1337)
+    // Retry with more search if needed (some tracks are harder for our simple controller family).
+    if (!line) line = tryEstimate(520, 424242)
+    if (!line) line = tryEstimate(900, 9001)
+    if (!line) throw new Error(`Failed to estimate ideal line for ${track.id}`)
     const medals = deriveMedalsFromBaseline(line.timeMs)
     const coins = generateCoinsFromIdealLine(track, line)
     out[track.id] = { medals, coins }
