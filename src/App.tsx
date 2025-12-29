@@ -8,7 +8,6 @@ import { stepSim } from './game/sim'
 import { drawFrame } from './render/draw'
 import { addTopTime, loadLastPlayerName, loadTopTimes, qualifiesTop5, saveLastPlayerName } from './game/highScores'
 import { loadCompletedTrackIds, saveCompletedTrackIds } from './game/progression'
-import { PRECOMPUTED_BY_TRACK } from './game/precomputed'
 
 const fmtMs = (ms: number) => {
   const t = Math.max(0, Math.round(ms))
@@ -83,21 +82,10 @@ export default function App() {
   const [pendingScoreMs, setPendingScoreMs] = useState<number | null>(null)
   const handledFinishRef = useRef(false)
 
-  const prepareTrack = useCallback((t: typeof track) => {
-    // Prefer precomputed (generated at build time) data.
-    const pre = PRECOMPUTED_BY_TRACK[t.id]
-    if (pre) {
-      t.medals = pre.medals
-      t.coins = pre.coins
-      return
-    }
-  }, [])
-
   const initRunForTrack = useCallback(
     (trackId: string) => {
       const t = getTrackById(trackId)
       if (!t) return
-      prepareTrack(t)
       const s = createInitialRunState(t)
       s.bestTimeMs = typeof window !== 'undefined' ? loadBestTimeMs(t.id) : null
       s.bestGhost = typeof window !== 'undefined' ? loadBestGhost(t.id) : null
@@ -118,7 +106,7 @@ export default function App() {
       setPendingScoreMs(null)
       handledFinishRef.current = false
     },
-    [prepareTrack],
+    [],
   )
 
   const startRunIfNeeded = useCallback(() => {
