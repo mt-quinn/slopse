@@ -141,15 +141,7 @@ export const TRACK_001: TrackDef = {
     ],
     18,
   ),
-  coins: [
-    // “Skill line” coins: positioned so optimal momentum lines snag them naturally.
-    { id: 'c1', p: { x: 670, y: 200 }, r: 14 },
-    { id: 'c2', p: { x: 1140, y: 250 }, r: 14 },
-    { id: 'c3', p: { x: 1495, y: 465 }, r: 14 },
-    { id: 'c4', p: { x: 1710, y: 310 }, r: 14 },
-    { id: 'c5', p: { x: 2205, y: 270 }, r: 14 },
-    { id: 'c6', p: { x: 2500, y: 245 }, r: 14 },
-  ],
+  coins: [],
 }
 
 export const TRACK_002: TrackDef = {
@@ -201,37 +193,7 @@ export const TRACK_002: TrackDef = {
     ],
     16,
   ),
-  coins: [
-    // Coins are laid on “good” lines: high-speed arcs / near-crest skim lines.
-    // Section 1
-    { id: 'l1', p: { x: 860, y: 200 }, r: 14 },
-    { id: 'l2', p: { x: 1400, y: 245 }, r: 14 },
-    { id: 'l3', p: { x: 1950, y: 465 }, r: 14 },
-    { id: 'l4', p: { x: 2320, y: 310 }, r: 14 },
-    { id: 'l5', p: { x: 2880, y: 260 }, r: 14 },
-    { id: 'l6', p: { x: 3420, y: 220 }, r: 14 },
-
-    // Section 2 (fast descent)
-    { id: 'l7', p: { x: 4200, y: 470 }, r: 14 },
-    { id: 'l8', p: { x: 4650, y: 540 }, r: 14 },
-    { id: 'l9', p: { x: 5200, y: 450 }, r: 14 },
-    { id: 'l10', p: { x: 5650, y: 315 }, r: 14 },
-    { id: 'l11', p: { x: 6020, y: 250 }, r: 14 },
-
-    // Section 3 (rollers)
-    { id: 'l12', p: { x: 6500, y: 300 }, r: 14 },
-    { id: 'l13', p: { x: 7000, y: 360 }, r: 14 },
-    { id: 'l14', p: { x: 7450, y: 250 }, r: 14 },
-    { id: 'l15', p: { x: 7900, y: 360 }, r: 14 },
-    { id: 'l16', p: { x: 8320, y: 270 }, r: 14 },
-
-    // Section 4 (valley + climb)
-    { id: 'l17', p: { x: 9020, y: 560 }, r: 14 },
-    { id: 'l18', p: { x: 9400, y: 575 }, r: 14 },
-    { id: 'l19', p: { x: 9800, y: 450 }, r: 14 },
-    { id: 'l20', p: { x: 10180, y: 320 }, r: 14 },
-    { id: 'l21', p: { x: 10480, y: 260 }, r: 14 },
-  ],
+  coins: [],
 }
 
 const mkTrack = (id: string, name: string, finishX: number, ctrl: Vec2[], startY: number, v0: number): TrackDef => ({
@@ -241,7 +203,7 @@ const mkTrack = (id: string, name: string, finishX: number, ctrl: Vec2[], startY
   finishX,
   medals: { bronzeMs: 0, silverMs: 0, goldMs: 0 },
   segments: buildCatmullRomSegments(ctrl, 16),
-  // Coins will be auto-generated from the ideal line unless cached.
+  // Coins are authored (track editor). Default: none.
   coins: [],
 })
 

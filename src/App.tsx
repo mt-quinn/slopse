@@ -466,12 +466,14 @@ export default function App() {
                   <span className="k">MPH</span>
                   <span className="v">{hud.speedMph}</span>
                 </span>
-                <span className="hudKvp">
-                  <span className="k">Coins</span>
-                  <span className="v">
-                    {hud.coins}/{hud.coinsTotal}
+                {hud.coinsTotal > 0 && (
+                  <span className="hudKvp">
+                    <span className="k">Coins</span>
+                    <span className="v">
+                      {hud.coins}/{hud.coinsTotal}
+                    </span>
                   </span>
-                </span>
+                )}
                 <span className="hudKvp">
                   <span className="k">Track</span>
                   <span className="v" style={{ letterSpacing: '0.01em' }}>

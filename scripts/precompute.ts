@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { ALL_TRACKS, getTrackById } from '../src/game/track'
-import { deriveMedalsFromBaseline, estimateIdealLine, generateCoinsFromIdealLine } from '../src/game/medals'
+import { deriveMedalsFromBaseline, estimateIdealLine } from '../src/game/medals'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -33,7 +33,7 @@ const run = () => {
     if (!line) line = tryEstimate(900, 9001)
     if (!line) throw new Error(`Failed to estimate ideal line for ${track.id}`)
     const medals = deriveMedalsFromBaseline(line.timeMs)
-    const coins = generateCoinsFromIdealLine(track, line)
+    const coins: PrecomputedTrackData['coins'] = []
     out[track.id] = { medals, coins }
     // eslint-disable-next-line no-console
     console.log(`${track.id}: baseline=${line.timeMs}ms gold=${medals.goldMs} coins=${coins.length}`)

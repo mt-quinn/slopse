@@ -200,7 +200,8 @@ export const stepSim = (s: RunState, dtSecRaw: number) => {
       const medal = bestMedal(timeMs, s.track.medals.bronzeMs, s.track.medals.silverMs, s.track.medals.goldMs)
       const coinsTotal = s.track.coins.length
       const coinsCollected = s.coinsCollected.size
-      const author = medal === 'gold' && coinsCollected === coinsTotal
+      // "Author" rating is only meaningful if the track actually has coins.
+      const author = coinsTotal > 0 && medal === 'gold' && coinsCollected === coinsTotal
       const prevBest = s.bestTimeMs
       const newBestTime = prevBest == null || timeMs < prevBest
       s.result = {
