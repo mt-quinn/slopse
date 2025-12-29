@@ -256,6 +256,65 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       }
     }
 
+    // Ghost time delta tag (screen-space, attached to ghost)
+    if (s.bestGhost && s.ghostPlayback.active && s.runStarted && !s.dead && !s.finished) {
+      const tNow = s.timeMs / 1000
+      const pGhost = sampleGhostAt(s.bestGhost.samples, tNow)
+      if (pGhost) {
+        // Find the ghost time that best matches the player's *position* (works even for loops/backtracking).
+        const px = s.disc.p.x
+        const py = s.disc.p.y
+        let bestI = 0
+        let bestD2 = Infinity
+        const samples = s.bestGhost.samples
+        for (let i = 0; i < samples.length; i++) {
+          const a = samples[i]!
+          const dx = a.x - px
+          const dy = a.y - py
+          const d2 = dx * dx + dy * dy
+          if (d2 < bestD2) {
+            bestD2 = d2
+            bestI = i
+          }
+        }
+        const tGhostAtPlayer = samples[bestI]?.t ?? tNow
+        const delta = tNow - tGhostAtPlayer // + means player is behind (slower)
+        const sign = delta >= 0 ? '+' : '-'
+        const text = `${sign}${Math.abs(delta).toFixed(2)}s`
+
+        const gx = (pGhost.x - s.camera.x) * zoom + w / 2
+        const gy = (pGhost.y - s.camera.y) * zoom + h / 2
+
+        ctx.save()
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.font = "900 12px 'Oxanium', system-ui, sans-serif"
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        const tw = ctx.measureText(text).width
+        const padX = 10
+        const bw = tw + padX * 2
+        const bh = 22
+        const bx = gx - bw / 2
+        const by = gy - 40 - bh / 2
+        ctx.fillStyle = 'rgba(10, 8, 22, 0.62)'
+        ctx.strokeStyle = 'rgba(140, 190, 255, 0.25)'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        const r = 12
+        ctx.moveTo(bx + r, by)
+        ctx.arcTo(bx + bw, by, bx + bw, by + bh, r)
+        ctx.arcTo(bx + bw, by + bh, bx, by + bh, r)
+        ctx.arcTo(bx, by + bh, bx, by, r)
+        ctx.arcTo(bx, by, bx + bw, by, r)
+        ctx.closePath()
+        ctx.fill()
+        ctx.stroke()
+        ctx.fillStyle = 'rgba(170, 215, 255, 0.95)'
+        ctx.fillText(text, gx, by + bh / 2 + 0.5)
+        ctx.restore()
+      }
+    }
+
     // Screen-space prompt
     if (!s.runStarted && !s.dead && !s.finished) {
       ctx.save()
