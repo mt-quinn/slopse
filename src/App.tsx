@@ -6,16 +6,6 @@ import { loadBestGhost, loadBestTimeMs, saveBestGhost, saveBestTimeMs } from './
 import { clamp, lerp } from './game/math'
 import { stepSim } from './game/sim'
 import { drawFrame } from './render/draw'
-import {
-  deriveMedalsFromBaseline,
-  estimateIdealLine,
-  generateCoinsFromIdealLine,
-  loadCachedIdealCoins,
-  loadCachedMedals,
-  saveCachedIdealCoins,
-  saveCachedIdealLine,
-  saveCachedMedals,
-} from './game/medals'
 import { addTopTime, loadLastPlayerName, loadTopTimes, qualifiesTop5, saveLastPlayerName } from './game/highScores'
 import { loadCompletedTrackIds, saveCompletedTrackIds } from './game/progression'
 import { PRECOMPUTED_BY_TRACK } from './game/precomputed'
@@ -44,7 +34,6 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const rafRef = useRef<number | null>(null)
   const hudBucketRef = useRef<number>(-1)
-  const isDev = import.meta.env.DEV
 
   const firstTrackId = useMemo(() => ALL_TRACKS[0]!.id, [])
   const [currentTrackId, setCurrentTrackId] = useState<string>(firstTrackId)
@@ -75,6 +64,7 @@ export default function App() {
   const [hud, setHud] = useState(() => ({
     timeMs: 0,
     energy: 1,
+    speedMph: 0,
     coins: 0,
     coinsTotal: track.coins.length,
     bestTimeMs: typeof window !== 'undefined' ? loadBestTimeMs(track.id) : null,
@@ -93,31 +83,14 @@ export default function App() {
   const [pendingScoreMs, setPendingScoreMs] = useState<number | null>(null)
   const handledFinishRef = useRef(false)
 
-  const [calibrating, setCalibrating] = useState(false)
-  const [calibrationText, setCalibrationText] = useState<string | null>(null)
-
   const prepareTrack = useCallback((t: typeof track) => {
-    if (typeof window === 'undefined') return
-
-    // Prefer precomputed (checked-in) data first.
+    // Prefer precomputed (generated at build time) data.
     const pre = PRECOMPUTED_BY_TRACK[t.id]
     if (pre) {
       t.medals = pre.medals
       t.coins = pre.coins
       return
     }
-
-    // Otherwise, use cached values (localStorage).
-    const cachedCoins = loadCachedIdealCoins(t.id)
-    if (cachedCoins && cachedCoins.length > 0) t.coins = cachedCoins
-
-    // Medals / ideal line
-    const cachedMedals = loadCachedMedals(t.id)
-    if (cachedMedals) t.medals = cachedMedals
-
-    // Note: we intentionally do NOT auto-run the ideal-line estimator here.
-    // That work should be precomputed and checked into `PRECOMPUTED_BY_TRACK` (or at least
-    // generated explicitly via a dev-only flow).
   }, [])
 
   const initRunForTrack = useCallback(
@@ -133,6 +106,7 @@ export default function App() {
       setHud({
         timeMs: 0,
         energy: 1,
+        speedMph: 0,
         coins: 0,
         coinsTotal: t.coins.length,
         bestTimeMs: s.bestTimeMs,
@@ -145,60 +119,6 @@ export default function App() {
       handledFinishRef.current = false
     },
     [prepareTrack],
-  )
-
-  const calibrateTrack = useCallback(
-    async (trackId: string) => {
-      if (!isDev) return
-      if (typeof window === 'undefined') return
-      const t = getTrackById(trackId)
-      if (!t) return
-      if (PRECOMPUTED_BY_TRACK[t.id]) {
-        setCalibrationText(`Track "${t.id}" already has precomputed data in src/game/precomputed.ts.`)
-        return
-      }
-
-      setCalibrating(true)
-      setCalibrationText(null)
-
-      // Let the UI paint “Calibrating…” before heavy compute.
-      await new Promise<void>((r) => window.setTimeout(() => r(), 30))
-
-      try {
-        const line = estimateIdealLine(t, { budget: 180, seed: 1337 })
-        if (!line) {
-          setCalibrationText(`Calibration failed for ${t.id} (no finish found).`)
-          return
-        }
-        const medals = deriveMedalsFromBaseline(line.timeMs)
-        const coins = generateCoinsFromIdealLine(t, line)
-
-        saveCachedIdealLine(t.id, line)
-        saveCachedMedals(t.id, medals)
-        saveCachedIdealCoins(t.id, coins)
-
-        // Also apply to the in-memory track object immediately.
-        t.medals = medals
-        t.coins = coins
-
-        const snippetObj = {
-          [t.id]: { medals, coins },
-        }
-        const text =
-          `// Paste into slopes-client/src/game/precomputed.ts\n` +
-          `// (inside PRECOMPUTED_BY_TRACK)\n` +
-          JSON.stringify(snippetObj, null, 2).replace(/^{\n|\n}$/g, '') +
-          `,\n`
-        setCalibrationText(text)
-
-        // Restart the run on the calibrated track so UI reflects it.
-        initRunForTrack(t.id)
-        setTopTimes(loadTopTimes(t.id))
-      } finally {
-        setCalibrating(false)
-      }
-    },
-    [initRunForTrack, isDev],
   )
 
   // Initialize and re-initialize when track changes. Doing this in an effect avoids
@@ -221,6 +141,7 @@ export default function App() {
       ...h,
       timeMs: 0,
       energy: 1,
+      speedMph: 0,
       coins: 0,
       coinsTotal: prev.track.coins.length,
       dead: false,
@@ -438,9 +359,13 @@ export default function App() {
       if (bucket !== hudBucketRef.current) {
         hudBucketRef.current = bucket
         const r = s.result
+        const speedPxPerSec = Math.hypot(s.disc.v.x, s.disc.v.y)
+        // Scale so ~2200 px/s reads as ~220 mph (matches our camera tuning range).
+        const speedMph = Math.round(speedPxPerSec / 10)
         setHud({
           timeMs: s.timeMs,
           energy: s.jet.energy,
+          speedMph,
           coins: s.coinsCollected.size,
           coinsTotal: s.track.coins.length,
           bestTimeMs: s.bestTimeMs,
@@ -484,6 +409,10 @@ export default function App() {
                 <span className="hudKvp">
                   <span className="k">Jet</span>
                   <span className="v">{Math.round(hud.energy * 100)}%</span>
+                </span>
+                <span className="hudKvp">
+                  <span className="k">MPH</span>
+                  <span className="v">{hud.speedMph}</span>
                 </span>
                 <span className="hudKvp">
                   <span className="k">Coins</span>
@@ -644,56 +573,6 @@ export default function App() {
                       )
                     })()}
 
-                    {isDev && (
-                      <div style={{ marginTop: '0.9rem' }}>
-                        <strong>Dev</strong>
-                        <div style={{ marginTop: '0.35rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                          <button
-                            type="button"
-                            className="btn"
-                            disabled={calibrating}
-                            onClick={() => calibrateTrack(currentTrackId)}
-                          >
-                            {calibrating ? 'Calibrating…' : 'Calibrate (medals+coins)'}
-                          </button>
-                          {calibrationText && (
-                            <button
-                              type="button"
-                              className="btn ghost"
-                              onClick={async () => {
-                                try {
-                                  await navigator.clipboard.writeText(calibrationText)
-                                } catch {
-                                  // ignore
-                                }
-                              }}
-                            >
-                              Copy snippet
-                            </button>
-                          )}
-                        </div>
-                        {calibrationText && (
-                          <textarea
-                            readOnly
-                            value={calibrationText}
-                            style={{
-                              marginTop: '0.5rem',
-                              width: '100%',
-                              minHeight: '160px',
-                              borderRadius: '0.75rem',
-                              border: '1px solid rgba(255,255,255,0.12)',
-                              background: 'rgba(0,0,0,0.22)',
-                              color: 'rgba(255,246,213,0.92)',
-                              padding: '0.6rem',
-                              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                              fontSize: '12px',
-                              lineHeight: 1.3,
-                              resize: 'vertical',
-                            }}
-                          />
-                        )}
-                      </div>
-                    )}
                   </div>
                   <div className="panelActions">
                     <button type="button" className="btn ghost" onClick={() => setShowTrackSelect(false)}>
