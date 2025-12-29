@@ -91,6 +91,11 @@ const runPolicyOnce = (track: TrackDef, pol: Policy, seed: number) => {
   s.ghostPlayback.active = false
   s.bestGhost = null
   s.bestTimeMs = null
+  // Estimator should start immediately (it doesn't go through the "tap to start" gate).
+  s.runStarted = true
+  s.startPlatform.active = false
+  s.disc.p = { ...track.start.p }
+  s.disc.v = { ...track.start.v }
   // Big view so camera death never matters in the estimator.
   s.view.width = 1000
   s.view.height = 1000

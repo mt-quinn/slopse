@@ -41,6 +41,26 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     }
     ctx.stroke()
 
+    // Start platform (pre-run)
+    if (!s.runStarted && s.startPlatform.active) {
+      ctx.save()
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.strokeStyle = 'rgba(255, 246, 213, 0.85)'
+      ctx.lineWidth = 6
+      ctx.lineCap = 'round'
+      ctx.beginPath()
+      ctx.moveTo(s.startPlatform.x0, s.startPlatform.y)
+      ctx.lineTo(s.startPlatform.x1, s.startPlatform.y)
+      ctx.stroke()
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(s.startPlatform.x0, s.startPlatform.y + 4)
+      ctx.lineTo(s.startPlatform.x1, s.startPlatform.y + 4)
+      ctx.stroke()
+      ctx.restore()
+    }
+
     // Main rail
     ctx.strokeStyle = 'rgba(255, 246, 213, 0.75)'
     ctx.lineWidth = 5
@@ -175,6 +195,40 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     }
 
     ctx.restore() // camera
+
+    // Screen-space prompt
+    if (!s.runStarted && !s.dead && !s.finished) {
+      ctx.save()
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.font = "900 14px 'Oxanium', system-ui, sans-serif"
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      const label = 'Tap / Space to start'
+      const x = w * 0.5
+      const y = h * 0.70
+      const tw = ctx.measureText(label).width
+      const padX = 14
+      const boxW = tw + padX * 2
+      const boxH = 30
+      const bx = x - boxW / 2
+      const by = y - boxH / 2
+      ctx.fillStyle = 'rgba(10, 8, 22, 0.62)'
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      const r = 14
+      ctx.moveTo(bx + r, by)
+      ctx.arcTo(bx + boxW, by, bx + boxW, by + boxH, r)
+      ctx.arcTo(bx + boxW, by + boxH, bx, by + boxH, r)
+      ctx.arcTo(bx, by + boxH, bx, by, r)
+      ctx.arcTo(bx, by, bx + boxW, by, r)
+      ctx.closePath()
+      ctx.fill()
+      ctx.stroke()
+      ctx.fillStyle = 'rgba(255,246,213,0.95)'
+      ctx.fillText(label, x, y)
+      ctx.restore()
+    }
   })
 }
 

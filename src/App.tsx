@@ -121,6 +121,42 @@ export default function App() {
     [prepareTrack],
   )
 
+  const startRunIfNeeded = useCallback(() => {
+    const s = stateRef.current
+    if (!s) return
+    if (s.runStarted) return
+
+    // Launch + start timer/recording on first interaction.
+    s.runStarted = true
+    s.startPlatform.active = false
+    s.dead = false
+    s.finished = false
+    s.finishHandled = false
+    s.result = null
+    s.timeMs = 0
+    s.disc.v = { ...s.track.start.v }
+    s.disc.grounded = false
+    s.disc.groundBlend = 0
+    s.recording.samples = []
+    s.recording.nextSampleT = 0
+    s.coinsCollected.clear()
+    s.jet.energy = 1
+    s.ghostPlayback.t = 0
+    handledFinishRef.current = false
+
+    setHud((h) => ({
+      ...h,
+      timeMs: 0,
+      energy: 1,
+      speedMph: 0,
+      coins: 0,
+      coinsTotal: s.track.coins.length,
+      dead: false,
+      finished: false,
+      medal: null,
+    }))
+  }, [])
+
   // Initialize and re-initialize when track changes. Doing this in an effect avoids
   // calling setState during render (which can crash in StrictMode/dev).
   useEffect(() => {
@@ -180,6 +216,7 @@ export default function App() {
       if (!s) return
       if (s.dead || s.finished) return
       if (s.input.thrustPointerId != null) return
+      startRunIfNeeded()
       s.input.thrustPointerId = e.pointerId
       s.input.thrust = true
     }
@@ -199,7 +236,7 @@ export default function App() {
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
     }
-  }, [])
+  }, [startRunIfNeeded])
 
   // Keyboard fallback.
   useEffect(() => {
@@ -208,6 +245,7 @@ export default function App() {
       const s = stateRef.current
       if (!s) return
       if (s.dead || s.finished) return
+      if (isDown) startRunIfNeeded()
       s.input.thrust = isDown
       e.preventDefault()
     }
@@ -219,7 +257,7 @@ export default function App() {
       window.removeEventListener('keydown', down)
       window.removeEventListener('keyup', up)
     }
-  }, [])
+  }, [startRunIfNeeded])
 
   // Main loop (sim + draw).
   useEffect(() => {
@@ -280,7 +318,7 @@ export default function App() {
       updateCamera()
 
       // Death by falling below camera bottom.
-      if (!s.dead && !s.finished) {
+      if (s.runStarted && !s.dead && !s.finished) {
         const bottom = s.camera.y + s.view.height / (2 * Math.max(0.0001, s.camera.zoom))
         if (s.disc.p.y - s.disc.r > bottom + 12) {
           s.dead = true

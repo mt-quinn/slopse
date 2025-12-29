@@ -44,10 +44,18 @@ export type RunState = {
     zoom: number
   }
 
+  runStarted: boolean
   timeMs: number
   finished: boolean
   finishHandled: boolean
   dead: boolean
+
+  startPlatform: {
+    active: boolean
+    x0: number
+    x1: number
+    y: number
+  }
 
   disc: {
     p: Vec2
@@ -84,19 +92,29 @@ export type RunState = {
 }
 
 export const createInitialRunState = (track: TrackDef): RunState => {
+  const discR = 16
+  const platformY = track.start.p.y - 120
   return {
     view: { width: 360, height: 640, dpr: 1 },
     input: { thrust: false, thrustPointerId: null },
     track,
     camera: { x: track.start.p.x + 160, y: track.start.p.y - 120, zoom: 1 },
+    runStarted: false,
     timeMs: 0,
     finished: false,
     finishHandled: false,
     dead: false,
+    startPlatform: {
+      active: true,
+      x0: track.start.p.x - 220,
+      x1: track.start.p.x + 320,
+      y: platformY,
+    },
     disc: {
-      p: { ...track.start.p },
-      v: { ...track.start.v },
-      r: 16,
+      // Start on a small platform above the track, stationary until first input.
+      p: { x: track.start.p.x, y: platformY - discR },
+      v: { x: 0, y: 0 },
+      r: discR,
       grounded: false,
       groundN: { x: 0, y: -1 },
       groundBlend: 0,

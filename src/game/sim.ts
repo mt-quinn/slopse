@@ -40,6 +40,7 @@ const bestMedal = (timeMs: number, bronzeMs: number, silverMs: number, goldMs: n
 
 export const stepSim = (s: RunState, dtSecRaw: number) => {
   if (s.dead || s.finished) return
+  if (!s.runStarted) return
 
   const dtSec = Math.min(0.05, dtSecRaw)
   const subSteps = Math.max(1, Math.min(MAX_SUBSTEPS, Math.ceil(dtSec / (1 / 120))))
