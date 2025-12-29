@@ -265,12 +265,21 @@ export default function App() {
     if (!canvas) return
 
     let last = performance.now()
+    let resizeTries = 0
 
     const resize = () => {
       const dpr = Math.max(1, Math.min(2.5, window.devicePixelRatio || 1))
       const parent = canvas.parentElement
       if (!parent) return
       const rect = parent.getBoundingClientRect()
+      // On some mobile browsers during address-bar transitions / first layout,
+      // getBoundingClientRect() can temporarily report ~0 height, which breaks camera/death math.
+      if ((rect.width < 40 || rect.height < 40) && resizeTries < 20) {
+        resizeTries++
+        requestAnimationFrame(resize)
+        return
+      }
+      resizeTries = 0
       const w = Math.max(1, rect.width)
       const h = Math.max(1, rect.height)
       canvas.width = Math.floor(w * dpr)
@@ -286,6 +295,7 @@ export default function App() {
 
     resize()
     window.addEventListener('resize', resize)
+    window.visualViewport?.addEventListener('resize', resize)
 
     const updateCamera = () => {
       const s = stateRef.current
@@ -320,7 +330,8 @@ export default function App() {
       updateCamera()
 
       // Death by falling below camera bottom.
-      if (s.runStarted && !s.dead && !s.finished) {
+      // Guard against invalid/too-small view sizes that can happen transiently on mobile.
+      if (s.runStarted && s.view.height > 80 && s.view.width > 80 && !s.dead && !s.finished) {
         const bottom = s.camera.y + s.view.height / (2 * Math.max(0.0001, s.camera.zoom))
         if (s.disc.p.y - s.disc.r > bottom + 12) {
           s.dead = true
@@ -421,6 +432,7 @@ export default function App() {
     rafRef.current = requestAnimationFrame(tick)
     return () => {
       window.removeEventListener('resize', resize)
+      window.visualViewport?.removeEventListener('resize', resize)
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
     }
   }, [track])
