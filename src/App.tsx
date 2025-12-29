@@ -239,6 +239,7 @@ export default function App() {
   // Pointer input: press anywhere to thrust; release to stop.
   useEffect(() => {
     const onDown = (e: PointerEvent) => {
+      e.preventDefault()
       const s = stateRef.current
       if (!s) return
       if (paused) return
@@ -256,13 +257,13 @@ export default function App() {
         s.input.thrust = false
       }
     }
-    window.addEventListener('pointerdown', onDown)
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', onUp)
+    window.addEventListener('pointerdown', onDown, { passive: false })
+    window.addEventListener('pointerup', onUp, { passive: true })
+    window.addEventListener('pointercancel', onUp, { passive: true })
     return () => {
-      window.removeEventListener('pointerdown', onDown)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', onUp)
+      window.removeEventListener('pointerdown', onDown as any)
+      window.removeEventListener('pointerup', onUp as any)
+      window.removeEventListener('pointercancel', onUp as any)
     }
   }, [paused, startRunIfNeeded])
 
