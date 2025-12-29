@@ -1,4 +1,4 @@
-import type { TrackDef } from './track'
+import { trackBounds, type TrackDef } from './track'
 import type { Vec2 } from './math'
 
 export type ViewState = {
@@ -37,6 +37,7 @@ export type RunState = {
   input: InputState
 
   track: TrackDef
+  trackMaxY: number // lowest point of the track in world coords (y grows downward)
 
   camera: {
     x: number
@@ -94,10 +95,12 @@ export type RunState = {
 export const createInitialRunState = (track: TrackDef): RunState => {
   const discR = 16
   const platformY = track.start.p.y - 120
+  const bounds = trackBounds(track.segments)
   return {
     view: { width: 360, height: 640, dpr: 1 },
     input: { thrust: false, thrustPointerId: null },
     track,
+    trackMaxY: bounds.maxY,
     camera: { x: track.start.p.x + 160, y: track.start.p.y - 120, zoom: 1 },
     runStarted: false,
     timeMs: 0,

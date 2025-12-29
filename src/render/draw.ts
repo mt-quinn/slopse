@@ -36,7 +36,13 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     ctx.beginPath()
     for (let i = 0; i < s.track.segments.length; i++) {
       const seg = s.track.segments[i]!
-      if (i === 0) ctx.moveTo(seg.a.x, seg.a.y)
+      // Avoid visually connecting discontiguous segments (e.g. multiple paths in the editor).
+      const prev = i > 0 ? s.track.segments[i - 1]!.b : null
+      const cont =
+        prev != null &&
+        Math.abs(prev.x - seg.a.x) < 1e-6 &&
+        Math.abs(prev.y - seg.a.y) < 1e-6
+      if (!cont) ctx.moveTo(seg.a.x, seg.a.y)
       ctx.lineTo(seg.b.x, seg.b.y)
     }
     ctx.stroke()
@@ -67,7 +73,12 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     ctx.beginPath()
     for (let i = 0; i < s.track.segments.length; i++) {
       const seg = s.track.segments[i]!
-      if (i === 0) ctx.moveTo(seg.a.x, seg.a.y)
+      const prev = i > 0 ? s.track.segments[i - 1]!.b : null
+      const cont =
+        prev != null &&
+        Math.abs(prev.x - seg.a.x) < 1e-6 &&
+        Math.abs(prev.y - seg.a.y) < 1e-6
+      if (!cont) ctx.moveTo(seg.a.x, seg.a.y)
       ctx.lineTo(seg.b.x, seg.b.y)
     }
     ctx.stroke()

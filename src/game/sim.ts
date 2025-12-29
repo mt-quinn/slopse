@@ -1,6 +1,6 @@
 import { clamp, dot, len, mul, normalize, sub, type Vec2 } from './math'
 import type { RunState } from './state'
-import { coinHit, closestPointOnSegment, findSegWindowByX, segNormalUp, segXRangeContains } from './track'
+import { coinHit, closestPointOnSegment, querySegIndicesAabb, segNormalUp } from './track'
 
 const GRAVITY = 1400 // px/s^2
 const JET_ACCEL = 1650 // px/s^2 upwards when thrusting
@@ -81,16 +81,17 @@ export const stepSim = (s: RunState, dtSecRaw: number) => {
     disc.grounded = false
     disc.groundN = { x: 0, y: -1 }
 
-    // Performance: only test segments near our x-position.
-    // Expand window with speed so large launches still find the ground.
-    const speedX = Math.abs(disc.v.x)
-    const halfWindow = Math.max(14, Math.min(90, 18 + Math.floor(speedX / 180)))
-    const win = findSegWindowByX(s.track.id, s.track.segments, disc.p.x, halfWindow)
+    // Performance: spatial hash query for segments near the disc (tracks can loop/backtrack).
+    const pad = disc.r + GROUND_SNAP_DIST + 10
+    const cand = querySegIndicesAabb(
+      s.track.id,
+      s.track.segments,
+      { minX: disc.p.x - pad, minY: disc.p.y - pad, maxX: disc.p.x + pad, maxY: disc.p.y + pad },
+      160,
+    )
 
-    for (let si = win.a; si <= win.b; si++) {
-      const seg = s.track.segments[si]!
-      // Quick x-range reject: our closest point on this segment can't matter if x is far away.
-      if (!segXRangeContains(seg, disc.p.x, disc.r + GROUND_SNAP_DIST + 6)) continue
+    for (let ci = 0; ci < cand.length; ci++) {
+      const seg = s.track.segments[cand[ci]!]!
       const q = closestPointOnSegment(disc.p, seg.a, seg.b)
       const d = sub(disc.p, q)
       const dist = len(d)

@@ -8,6 +8,34 @@ import { stepSim } from './game/sim'
 import { drawFrame } from './render/draw'
 import { addTopTime, loadLastPlayerName, loadTopTimes, qualifiesTop5, saveLastPlayerName } from './game/highScores'
 import { loadCompletedTrackIds, saveCompletedTrackIds } from './game/progression'
+import { applyCameraDeath, updateRunCamera } from './game/camera'
+import { startRun } from './game/runControl'
+
+const DevEditorGate = () => {
+  const [Editor, setEditor] = useState<null | React.ComponentType>(null)
+  useEffect(() => {
+    let alive = true
+    import('./editor/TrackEditor').then((m) => {
+      if (!alive) return
+      setEditor(() => m.default as any)
+    })
+    return () => {
+      alive = false
+    }
+  }, [])
+  if (!Editor) {
+    return (
+      <div className="sl-viewport">
+        <div className="sl-shell" style={{ padding: '1rem' }}>
+          <div className="panel">
+            <div className="panelTitle">Loading editor…</div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+  return <Editor />
+}
 
 const fmtMs = (ms: number) => {
   const t = Math.max(0, Math.round(ms))
@@ -30,6 +58,28 @@ const medalLabel = (r: RunResult | null) => {
 }
 
 export default function App() {
+  const isEditor = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('editor')
+  // Editor is a local-only dev tool.
+  if (isEditor) {
+    if (!import.meta.env.DEV) {
+      // On production (e.g. Vercel), ignore the editor flag and run the game.
+    } else if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+      // Avoid exposing editor on non-local hosts even in dev server mode.
+      return (
+        <div className="sl-viewport">
+          <div className="sl-shell" style={{ padding: '1rem' }}>
+            <div className="panel">
+              <div className="panelTitle">Editor disabled</div>
+              <div className="panelBody">The track editor is only available on localhost.</div>
+            </div>
+          </div>
+        </div>
+      )
+    } else {
+      return <DevEditorGate />
+    }
+  }
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const rafRef = useRef<number | null>(null)
   const hudBucketRef = useRef<number>(-1)
@@ -112,24 +162,7 @@ export default function App() {
   const startRunIfNeeded = useCallback(() => {
     const s = stateRef.current
     if (!s) return
-    if (s.runStarted) return
-
-    // Launch + start timer/recording on first interaction.
-    s.runStarted = true
-    s.startPlatform.active = false
-    s.dead = false
-    s.finished = false
-    s.finishHandled = false
-    s.result = null
-    s.timeMs = 0
-    s.disc.v = { ...s.track.start.v }
-    s.disc.grounded = false
-    s.disc.groundBlend = 0
-    s.recording.samples = []
-    s.recording.nextSampleT = 0
-    s.coinsCollected.clear()
-    s.jet.energy = 1
-    s.ghostPlayback.t = 0
+    startRun(s)
     handledFinishRef.current = false
 
     setHud((h) => ({
@@ -285,29 +318,6 @@ export default function App() {
     window.addEventListener('resize', resize)
     window.visualViewport?.addEventListener('resize', resize)
 
-    const updateCamera = () => {
-      const s = stateRef.current
-      if (!s) return
-      const v = s.disc.v
-      const speed = Math.hypot(v.x, v.y)
-      const baseZoom = 1
-      const zoomOut = clamp(speed / 2200, 0, 1) * 0.42
-      const targetZoom = clamp(baseZoom - zoomOut, 0.55, 1)
-
-      const lookahead = clamp(Math.max(0, v.x) * 0.24, 0, 360)
-      const targetX = s.disc.p.x + 90 + lookahead
-      const targetY = s.disc.p.y - 130
-
-      // Follow up quickly (y decreasing), but follow down slowly so falling can kill you.
-      const cam = s.camera
-      const upRate = 0.16
-      const downRate = 0.04
-      const rateY = targetY < cam.y ? upRate : downRate
-      cam.x = lerp(cam.x, targetX, 0.10)
-      cam.y = lerp(cam.y, targetY, rateY)
-      cam.zoom = lerp(cam.zoom, targetZoom, 0.10)
-    }
-
     const tick = (now: number) => {
       const s = stateRef.current
       if (!s) return
@@ -315,28 +325,8 @@ export default function App() {
       last = now
 
       stepSim(s, dtSec)
-      updateCamera()
-
-      // Death by falling below camera bottom.
-      // Guard against invalid/too-small view sizes that can happen transiently on mobile.
-      if (s.runStarted && s.view.height > 80 && s.view.width > 80 && !s.dead && !s.finished) {
-        const bottom = s.camera.y + s.view.height / (2 * Math.max(0.0001, s.camera.zoom))
-        if (s.disc.p.y - s.disc.r > bottom + 12) {
-          s.dead = true
-          s.input.thrust = false
-          s.input.thrustPointerId = null
-          const timeMs = Math.max(1, Math.round(s.timeMs))
-          s.result = {
-            finished: false,
-            timeMs,
-            coinsCollected: s.coinsCollected.size,
-            coinsTotal: s.track.coins.length,
-            medal: 'none',
-            author: false,
-            newBestTime: false,
-          }
-        }
-      }
+      updateRunCamera(s)
+      applyCameraDeath(s)
 
       // If we finished and it’s a new best, persist best time + ghost (positions).
       // Finish handling: run exactly once per finish. If this run is the new best time,

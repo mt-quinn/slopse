@@ -1,4 +1,5 @@
 import { clamp, dot, len, sub, type Vec2 } from './math'
+import { EDITED_TRACK_SOURCES } from './tracks.edited'
 
 export type TrackSegment = { a: Vec2; b: Vec2 }
 
@@ -14,52 +15,128 @@ export type TrackDef = {
   medals: { bronzeMs: number; silverMs: number; goldMs: number }
 }
 
-export const getTrackById = (id: string) => ALL_TRACKS.find((t) => t.id === id) ?? null
+// --- Authored track format (editor) ---
+// The game sim/collision uses `segments` (sampled line segments), but the editor needs a higher-level
+// representation with vertices + handles. We store cubic Bézier handles as vectors relative to the node.
+export type TrackPathNode = {
+  p: Vec2
+  // Incoming handle vector from p (relative). If omitted, treated as {0,0}.
+  in?: Vec2
+  // Outgoing handle vector from p (relative). If omitted, treated as {0,0}.
+  out?: Vec2
+}
 
-// --- Segment indexing helpers (performance) ---
-// Our tracks are monotonic in X. We can binary search by segment x-range and then
-// test only a small neighborhood, instead of scanning the whole segment list.
+export type TrackPath = {
+  id: string
+  nodes: TrackPathNode[]
+  closed?: boolean
+}
+
+export type TrackSource = Omit<TrackDef, 'segments'> & {
+  paths: TrackPath[]
+  // Sampling density for runtime segments.
+  sampleStepPx?: number
+}
+
+export const getTrackById = (id: string) => ALL_TRACKS.find((t) => t.id === id) ?? null
+export const getTrackSourceById = (id: string) => ALL_TRACK_SOURCES.find((t) => t.id === id) ?? null
+
+// --- Segment spatial index (performance) ---
+// Tracks are no longer assumed monotonic in X (Line Rider style). We use a simple spatial hash
+// (uniform grid) to quickly find nearby segments for collision queries.
+type SpatialIndex = {
+  cellSize: number
+  buckets: Map<number, number[]>
+  stamp: Uint32Array
+  stampId: number
+}
+
+// Cache by segments array identity so live-edited tracks (editor) always rebuild their index.
+// Also keyed by cellSize because different query radii may want different bucket sizes.
+const spatialCache = new WeakMap<TrackSegment[], Map<number, SpatialIndex>>()
+
 const segMinX = (s: TrackSegment) => (s.a.x <= s.b.x ? s.a.x : s.b.x)
 const segMaxX = (s: TrackSegment) => (s.a.x >= s.b.x ? s.a.x : s.b.x)
+const segMinY = (s: TrackSegment) => (s.a.y <= s.b.y ? s.a.y : s.b.y)
+const segMaxY = (s: TrackSegment) => (s.a.y >= s.b.y ? s.a.y : s.b.y)
 
-type SegIndex = { startX: number[] }
-const segIndexCache = new Map<string, SegIndex>()
+const packCellKey = (cx: number, cy: number) => ((cx & 0xffff) << 16) | (cy & 0xffff)
 
-export const getSegIndex = (trackId: string, segs: TrackSegment[]): SegIndex => {
-  const cached = segIndexCache.get(trackId)
-  if (cached && cached.startX.length === segs.length) return cached
-  const startX = segs.map((s) => segMinX(s))
-  const idx = { startX }
-  segIndexCache.set(trackId, idx)
+export const getSpatialIndex = (_trackId: string, segs: TrackSegment[], cellSize = 160): SpatialIndex => {
+  let byCell = spatialCache.get(segs)
+  if (!byCell) {
+    byCell = new Map()
+    spatialCache.set(segs, byCell)
+  }
+  const cached = byCell.get(cellSize)
+  if (cached) return cached
+
+  const buckets = new Map<number, number[]>()
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i]!
+    const minX = segMinX(s)
+    const maxX = segMaxX(s)
+    const minY = segMinY(s)
+    const maxY = segMaxY(s)
+    const ax = Math.floor(minX / cellSize)
+    const bx = Math.floor(maxX / cellSize)
+    const ay = Math.floor(minY / cellSize)
+    const by = Math.floor(maxY / cellSize)
+    for (let cx = ax; cx <= bx; cx++) {
+      for (let cy = ay; cy <= by; cy++) {
+        const k = packCellKey(cx, cy)
+        const arr = buckets.get(k)
+        if (arr) arr.push(i)
+        else buckets.set(k, [i])
+      }
+    }
+  }
+
+  const idx: SpatialIndex = {
+    cellSize,
+    buckets,
+    stamp: new Uint32Array(Math.max(1, segs.length)),
+    stampId: 1,
+  }
+  byCell.set(cellSize, idx)
   return idx
 }
 
-export const findSegWindowByX = (
+export const querySegIndicesAabb = (
   trackId: string,
   segs: TrackSegment[],
-  x: number,
-  halfWindow: number,
+  aabb: { minX: number; minY: number; maxX: number; maxY: number },
+  cellSize = 160,
 ) => {
-  const idx = getSegIndex(trackId, segs)
-  const xs = idx.startX
-  // upper_bound for x
-  let lo = 0
-  let hi = xs.length
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1
-    if (xs[mid]! <= x) lo = mid + 1
-    else hi = mid
+  const idx = getSpatialIndex(trackId, segs, cellSize)
+  // Resize stamp if segment count changed (shouldn't when cached hits, but safe).
+  if (idx.stamp.length !== segs.length) idx.stamp = new Uint32Array(Math.max(1, segs.length))
+  idx.stampId = (idx.stampId + 1) >>> 0
+  if (idx.stampId === 0) {
+    idx.stamp.fill(0)
+    idx.stampId = 1
   }
-  const center = Math.max(0, lo - 1)
-  const a = Math.max(0, center - halfWindow)
-  const b = Math.min(segs.length - 1, center + halfWindow)
-  return { a, b }
-}
 
-export const segXRangeContains = (seg: TrackSegment, x: number, pad: number) => {
-  const x0 = segMinX(seg) - pad
-  const x1 = segMaxX(seg) + pad
-  return x >= x0 && x <= x1
+  const cs = idx.cellSize
+  const ax = Math.floor(aabb.minX / cs)
+  const bx = Math.floor(aabb.maxX / cs)
+  const ay = Math.floor(aabb.minY / cs)
+  const by = Math.floor(aabb.maxY / cs)
+
+  const out: number[] = []
+  for (let cx = ax; cx <= bx; cx++) {
+    for (let cy = ay; cy <= by; cy++) {
+      const k = packCellKey(cx, cy)
+      const arr = idx.buckets.get(k)
+      if (!arr) continue
+      for (const si of arr) {
+        if (idx.stamp[si] === idx.stampId) continue
+        idx.stamp[si] = idx.stampId
+        out.push(si)
+      }
+    }
+  }
+  return out
 }
 
 const catmullRom = (p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: number): Vec2 => {
@@ -118,15 +195,109 @@ export const buildCatmullRomSegments = (ctrl: Vec2[], stepPx: number): TrackSegm
   return segs
 }
 
-export const TRACK_001: TrackDef = {
+const vadd = (a: Vec2, b: Vec2): Vec2 => ({ x: a.x + b.x, y: a.y + b.y })
+const vsub = (a: Vec2, b: Vec2): Vec2 => ({ x: a.x - b.x, y: a.y - b.y })
+const vmul = (a: Vec2, k: number): Vec2 => ({ x: a.x * k, y: a.y * k })
+
+// Convert a polyline (or Catmull control points) into smooth nodes with symmetric in/out handles.
+// This is used to seed editor-editable data for our existing tracks.
+export const nodesFromCatmullCtrl = (ctrl: Vec2[]): TrackPathNode[] => {
+  const n = ctrl.length
+  if (n === 0) return []
+  if (n === 1) return [{ p: { ...ctrl[0]! } }]
+  const nodes: TrackPathNode[] = []
+  for (let i = 0; i < n; i++) {
+    const p = ctrl[i]!
+    const pPrev = ctrl[i - 1] ?? ctrl[i]!
+    const pNext = ctrl[i + 1] ?? ctrl[i]!
+    // Catmull tangent (uniform) at p.
+    const m = vmul(vsub(pNext, pPrev), 0.5)
+    // Hermite->Bezier: c1 = p + m/3, c2 = p - m/3 (for adjacent segment endpoints).
+    const h = vmul(m, 1 / 3)
+    nodes.push({ p: { ...p }, in: vmul(h, -1), out: h })
+  }
+  // For endpoints, bias tangents to be less aggressive.
+  const m0 = vsub(ctrl[1]!, ctrl[0]!)
+  nodes[0] = { p: { ...ctrl[0]! }, in: { x: 0, y: 0 }, out: vmul(m0, 1 / 3) }
+  const mn = vsub(ctrl[n - 1]!, ctrl[n - 2]!)
+  nodes[n - 1] = { p: { ...ctrl[n - 1]! }, in: vmul(mn, -1 / 3), out: { x: 0, y: 0 } }
+  return nodes
+}
+
+const evalCubic = (p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: number): Vec2 => {
+  const u = 1 - t
+  const tt = t * t
+  const uu = u * u
+  const uuu = uu * u
+  const ttt = tt * t
+  return {
+    x: uuu * p0.x + 3 * uu * t * p1.x + 3 * u * tt * p2.x + ttt * p3.x,
+    y: uuu * p0.y + 3 * uu * t * p1.y + 3 * u * tt * p2.y + ttt * p3.y,
+  }
+}
+
+export const buildBezierSegmentsFromPaths = (paths: TrackPath[], stepPx: number): TrackSegment[] => {
+  const segs: TrackSegment[] = []
+  const step = Math.max(3, stepPx)
+  for (const path of paths) {
+    const nodes = path.nodes
+    const closed = !!path.closed
+    const count = nodes.length
+    if (count < 2) continue
+    const segCount = closed ? count : count - 1
+    for (let i = 0; i < segCount; i++) {
+      const a = nodes[i]!
+      const b = nodes[(i + 1) % count]!
+      const p0 = a.p
+      const p3 = b.p
+      const c1 = vadd(p0, a.out ?? { x: 0, y: 0 })
+      const c2 = vadd(p3, b.in ?? { x: 0, y: 0 })
+
+      // Estimate curve length with a coarse polyline for step count.
+      const lEst =
+        Math.hypot(c1.x - p0.x, c1.y - p0.y) +
+        Math.hypot(c2.x - c1.x, c2.y - c1.y) +
+        Math.hypot(p3.x - c2.x, p3.y - c2.y)
+      const steps = Math.max(6, Math.ceil(lEst / step))
+      let prev = { ...p0 }
+      for (let k = 1; k <= steps; k++) {
+        const t = k / steps
+        const p = evalCubic(p0, c1, c2, p3, t)
+        const dx = p.x - prev.x
+        const dy = p.y - prev.y
+        if (dx * dx + dy * dy > 1e-6) segs.push({ a: prev, b: p })
+        prev = p
+      }
+    }
+  }
+  return segs
+}
+
+export const compileTrack = (src: TrackSource): TrackDef => {
+  const stepPx = Math.max(6, src.sampleStepPx ?? 16)
+  const segments = buildBezierSegmentsFromPaths(src.paths, stepPx)
+  return {
+    id: src.id,
+    name: src.name,
+    start: src.start,
+    finishX: src.finishX,
+    segments,
+    coins: src.coins,
+    medals: src.medals,
+  }
+}
+
+export const TRACK_001: TrackSource = {
   id: 'track-001',
   name: 'Warmup Slope',
   start: { p: { x: 40, y: 260 }, v: { x: 220, y: 0 } },
   finishX: 2600,
   medals: { bronzeMs: 26000, silverMs: 19000, goldMs: 14500 },
-  // Smooth spline sampled into many tiny segments for collision + rendering.
-  segments: buildCatmullRomSegments(
-    [
+  sampleStepPx: 18,
+  paths: [
+    {
+      id: 'p1',
+      nodes: nodesFromCatmullCtrl([
       { x: 0, y: 320 },
       { x: 380, y: 320 },
       { x: 720, y: 240 },
@@ -138,13 +309,13 @@ export const TRACK_001: TrackDef = {
       { x: 2140, y: 320 },
       { x: 2360, y: 360 },
       { x: 2600, y: 280 },
-    ],
-    18,
-  ),
+      ]),
+    },
+  ],
   coins: [],
 }
 
-export const TRACK_002: TrackDef = {
+export const TRACK_002: TrackSource = {
   id: 'track-002',
   name: 'Longline (10k)',
   start: { p: { x: 40, y: 260 }, v: { x: 240, y: 0 } },
@@ -152,8 +323,11 @@ export const TRACK_002: TrackDef = {
   finishX: 10600,
   // Placeholder defaults; `App.tsx` will estimate and cache medals for this track on first load.
   medals: { bronzeMs: 0, silverMs: 0, goldMs: 0 },
-  segments: buildCatmullRomSegments(
-    [
+  sampleStepPx: 16,
+  paths: [
+    {
+      id: 'p1',
+      nodes: nodesFromCatmullCtrl([
       // Section 1: warmup into first descent
       { x: 0, y: 320 },
       { x: 500, y: 320 },
@@ -190,19 +364,27 @@ export const TRACK_002: TrackDef = {
       { x: 9900, y: 420 },
       { x: 10250, y: 320 },
       { x: 10600, y: 280 },
-    ],
-    16,
-  ),
+      ]),
+    },
+  ],
   coins: [],
 }
 
-const mkTrack = (id: string, name: string, finishX: number, ctrl: Vec2[], startY: number, v0: number): TrackDef => ({
+const mkTrack = (
+  id: string,
+  name: string,
+  finishX: number,
+  ctrl: Vec2[],
+  startY: number,
+  v0: number,
+): TrackSource => ({
   id,
   name,
   start: { p: { x: 40, y: startY }, v: { x: v0, y: 0 } },
   finishX,
   medals: { bronzeMs: 0, silverMs: 0, goldMs: 0 },
-  segments: buildCatmullRomSegments(ctrl, 16),
+  sampleStepPx: 16,
+  paths: [{ id: 'p1', nodes: nodesFromCatmullCtrl(ctrl) }],
   // Coins are authored (track editor). Default: none.
   coins: [],
 })
@@ -448,7 +630,100 @@ export const TRACK_012 = mkTrack(
   265,
 )
 
-export const ALL_TRACKS: TrackDef[] = [
+export const TRACK_013 = mkTrack(
+  'track-013',
+  'Cathedral Drop',
+  10400,
+  [
+    // Big vertical variation: deep drops + tall climbs.
+    { x: 0, y: 320 },
+    { x: 420, y: 320 },
+    { x: 900, y: 420 },
+    { x: 1350, y: 780 },
+    { x: 1750, y: 1180 },
+    { x: 2200, y: 1280 }, // deep valley floor
+    { x: 2700, y: 980 },
+    { x: 3200, y: 520 },
+    { x: 3650, y: 220 }, // high ridge
+    { x: 4100, y: 260 },
+    { x: 4700, y: 760 },
+    { x: 5350, y: 1080 },
+    { x: 6000, y: 740 },
+    { x: 6600, y: 260 }, // second ridge
+    { x: 7100, y: 180 },
+    { x: 7700, y: 520 },
+    { x: 8300, y: 1040 },
+    { x: 8800, y: 1320 }, // second deep dip
+    { x: 9300, y: 980 },
+    { x: 9800, y: 520 },
+    { x: 10400, y: 300 },
+  ],
+  260,
+  245,
+)
+
+export const TRACK_014: TrackSource = {
+  id: 'track-014',
+  name: 'Sky Loop (Split)',
+  start: { p: { x: 40, y: 640 }, v: { x: 260, y: 0 } },
+  finishX: 9200,
+  medals: { bronzeMs: 0, silverMs: 0, goldMs: 0 },
+  coins: [],
+  sampleStepPx: 14,
+  paths: [
+    // Approach + launch ramp (ends near the loop, but NOT connected)
+    {
+      id: 'p-approach',
+      nodes: nodesFromCatmullCtrl([
+        { x: 0, y: 640 },
+        { x: 700, y: 640 },
+        { x: 1200, y: 700 },
+        { x: 1700, y: 920 }, // build speed in a dip
+        { x: 2100, y: 760 },
+        { x: 2400, y: 520 },
+        { x: 2620, y: 450 }, // launch lip
+      ]),
+    },
+
+    // Discontiguous loop above the ramp:
+    // This is an *open* loop with a gap on the bottom (between ~45° and ~135°),
+    // so you can enter/exit without any contiguous connection.
+    {
+      id: 'p-loop',
+      nodes: nodesFromCatmullCtrl(
+        (() => {
+          const cx = 2900
+          const cy = 260
+          const r = 240
+          const deg = (d: number) => (d * Math.PI) / 180
+          const angles = [135, 165, 195, 225, 255, 270, 285, 315, 345, 15, 45]
+          return angles.map((a) => ({
+            x: cx + r * Math.cos(deg(a)),
+            y: cy + r * Math.sin(deg(a)),
+          }))
+        })(),
+      ),
+    },
+
+    // Exit ramp (starts near loop exit, but NOT connected)
+    {
+      id: 'p-exit',
+      nodes: nodesFromCatmullCtrl([
+        { x: 3160, y: 470 },
+        { x: 3600, y: 610 },
+        { x: 4200, y: 520 },
+        { x: 4900, y: 720 },
+        { x: 5600, y: 520 },
+        { x: 6400, y: 660 },
+        { x: 7400, y: 520 },
+        { x: 8200, y: 600 },
+        { x: 9200, y: 520 },
+      ]),
+    },
+  ],
+}
+
+const BASE_TRACK_SOURCES: TrackSource[] = [
   TRACK_002,
   TRACK_003,
   TRACK_004,
@@ -460,8 +735,20 @@ export const ALL_TRACKS: TrackDef[] = [
   TRACK_010,
   TRACK_011,
   TRACK_012,
+  TRACK_013,
+  TRACK_014,
   TRACK_001,
 ]
+
+const mergeEdited = (base: TrackSource[], edited: TrackSource[]) => {
+  const byId = new Map<string, TrackSource>()
+  for (const t of base) byId.set(t.id, t)
+  for (const t of edited) byId.set(t.id, t)
+  return Array.from(byId.values())
+}
+
+export const ALL_TRACK_SOURCES: TrackSource[] = mergeEdited(BASE_TRACK_SOURCES, EDITED_TRACK_SOURCES)
+export const ALL_TRACKS: TrackDef[] = ALL_TRACK_SOURCES.map(compileTrack)
 
 export const closestPointOnSegment = (p: Vec2, a: Vec2, b: Vec2) => {
   const ab = sub(b, a)
