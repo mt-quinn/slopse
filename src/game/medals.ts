@@ -27,13 +27,14 @@ const mulberry32 = (seed: number) => {
 
 const clamp01 = (x: number) => clamp(x, 0, 1)
 
-const closestPointOnTrack = (p: Vec2, segs: TrackSegment[]) => {
+const closestPointOnTrack = (trackId: string, p: Vec2, segs: TrackSegment[]) => {
   let bestD2 = Infinity
   let bestQ: Vec2 = { x: 0, y: 0 }
   let bestN: Vec2 = { x: 0, y: -1 }
   // Use x-window search for speed (tracks are monotonic in x).
-  // Track id isn't available here; we just need a stable cache key for this segments array length.
-  const win = findSegWindowByX('__est__', segs, p.x, 42)
+  // IMPORTANT: must key the segment index per-track. Sharing across tracks can pick the wrong
+  // window and break the controller (and precompute).
+  const win = findSegWindowByX(trackId, segs, p.x, 42)
   for (let i = win.a; i <= win.b; i++) {
     const s = segs[i]!
     if (!segXRangeContains(s, p.x, 420)) continue
@@ -65,7 +66,7 @@ type Policy = {
 
 const decideThrust = (track: TrackDef, p: Vec2, v: Vec2, pol: Policy) => {
   const lookX = p.x + Math.max(0, v.x) * pol.lookaheadSec
-  const probe = closestPointOnTrack({ x: lookX, y: p.y }, track.segments)
+  const probe = closestPointOnTrack(track.id, { x: lookX, y: p.y }, track.segments)
   const q = probe.q
   const n = probe.nUp
   // Signed distance along “up” normal.
@@ -124,9 +125,10 @@ const runPolicyOnce = (track: TrackDef, pol: Policy, seed: number) => {
       nextSampleT = samples.length / samplesHz
     }
 
-    // If we’re catastrophically off course (below track by a lot), abort.
-    const probe = closestPointOnTrack(s.disc.p, track.segments)
-    if (probe.dist > 900) return null
+    // If we’re catastrophically off course, abort.
+    // Allow large airborne gaps (deep valleys / big launches) so we don't incorrectly fail.
+    const probe = closestPointOnTrack(track.id, s.disc.p, track.segments)
+    if (probe.dist > 2600) return null
   }
 
   if (!s.finished) return null
@@ -287,7 +289,7 @@ export const generateCoinsFromIdealLine = (track: TrackDef, line: IdealLine, opt
 
     // Place coin slightly above the ideal centerline so it reads “collectible” rather than “inside you”,
     // while still being guaranteed to intersect the disc.
-    const probe = closestPointOnTrack({ x: s.x, y: s.y }, track.segments)
+    const probe = closestPointOnTrack(track.id, { x: s.x, y: s.y }, track.segments)
     const n = probe.nUp
     const upOffset = 10
     const p = { x: s.x + n.x * upOffset, y: s.y + n.y * upOffset }
