@@ -30,6 +30,11 @@ export const loadBestGhost = (trackId: string): GhostRun | null => {
     if (!parsed || parsed.version !== 1) return null
     if (parsed.trackId !== trackId) return null
     if (!Array.isArray(parsed.samples)) return null
+    // Backward compatibility: add thrusting field to old samples that don't have it
+    parsed.samples = parsed.samples.map(s => ({
+      ...s,
+      thrusting: s.thrusting ?? false
+    }))
     return parsed
   } catch {
     return null

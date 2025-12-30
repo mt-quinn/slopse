@@ -395,7 +395,7 @@ export default function App() {
             samples.length === 0 ||
             Math.abs(samples[samples.length - 1]!.t - tSec) > 1 / s.recording.samplesHz
           ) {
-            samples.push({ t: tSec, x: s.disc.p.x, y: s.disc.p.y })
+            samples.push({ t: tSec, x: s.disc.p.x, y: s.disc.p.y, thrusting: false })
           }
           const ghost: GhostRun = {
             version: 1,

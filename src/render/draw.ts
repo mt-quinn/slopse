@@ -131,6 +131,22 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         ctx.beginPath()
         ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
         ctx.stroke()
+        
+        // Ghost jetpack flame indicator
+        if (p.thrusting) {
+          const bodyY = p.y - r - 10
+          ctx.globalCompositeOperation = 'lighter'
+          ctx.globalAlpha = 0.30
+          ctx.fillStyle = 'rgba(120, 180, 255, 0.25)'
+          ctx.beginPath()
+          ctx.ellipse(p.x, bodyY + 46, 10, 18, 0, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.fillStyle = 'rgba(120, 180, 255, 0.65)'
+          ctx.beginPath()
+          ctx.ellipse(p.x, bodyY + 44, 5, 10, 0, 0, Math.PI * 2)
+          ctx.fill()
+        }
+        
         ctx.restore()
       }
     }
