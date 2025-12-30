@@ -180,8 +180,8 @@ export const stepSim = (s: RunState, dtSecRaw: number) => {
       disc.groundBlend = 0
     }
 
-    // Ground recharge for jet energy (Noita-style: only when grounded).
-    if (disc.grounded) {
+    // Ground recharge for jet energy (Noita-style: only when grounded and not thrusting).
+    if (disc.grounded && !thrusting) {
       s.jet.energy = clamp(s.jet.energy + h * 1.35, 0, JET_MAX_ENERGY)
     }
 
