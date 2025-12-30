@@ -110,8 +110,8 @@ export const createInitialRunState = (track: TrackDef): RunState => {
     dead: false,
     startPlatform: {
       active: true,
-      x0: track.start.p.x - 220,
-      x1: track.start.p.x + 320,
+      x0: track.start.p.x - 40,
+      x1: track.start.p.x + 40,
       y: platformY,
     },
     disc: {
