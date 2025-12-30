@@ -294,7 +294,17 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         const padX = 10
         const bw = tw + padX * 2
         const bh = 22
-        const bx = gx - bw / 2
+        
+        // Lock horizontal position to screen edge if ghost is out of bounds
+        let bx = gx - bw / 2
+        if (gx < 0) {
+          // Ghost is beyond left edge, lock to left
+          bx = padX
+        } else if (gx > w) {
+          // Ghost is beyond right edge, lock to right
+          bx = w - bw - padX
+        }
+        
         const by = gy - 40 - bh / 2
         ctx.fillStyle = 'rgba(10, 8, 22, 0.62)'
         ctx.strokeStyle = 'rgba(140, 190, 255, 0.25)'
@@ -310,7 +320,7 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         ctx.fill()
         ctx.stroke()
         ctx.fillStyle = 'rgba(170, 215, 255, 0.95)'
-        ctx.fillText(text, gx, by + bh / 2 + 0.5)
+        ctx.fillText(text, bx + bw / 2, by + bh / 2 + 0.5)
         ctx.restore()
       }
     }
