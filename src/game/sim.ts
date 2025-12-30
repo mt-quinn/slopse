@@ -6,6 +6,7 @@ import { JET_MAX_ENERGY } from './tuning'
 const GRAVITY = 1400 // px/s^2
 const JET_ACCEL = 2475 // px/s^2 upwards when thrusting (increased by 50% from 1650)
 const AIR_DRAG = 0.06 // quadratic-ish via dt-stable multiplier
+const SLOPE_ACCEL_BONUS = 700 // px/s^2 additional acceleration down slopes (50% of gravity)
 
 const GROUND_STICK_EPS = 0.9
 const GROUND_SNAP_DIST = 4
@@ -46,7 +47,7 @@ export const stepSim = (s: RunState, dtSecRaw: number) => {
     s.timeMs += h * 1000
 
     // Forces: gravity + jet (world-up).
-    let ax = 0
+    const ax = 0
     let ay = GRAVITY
 
     const thrusting = s.input.thrust && s.jet.energy > 0 && !s.finished && !s.dead
@@ -169,6 +170,24 @@ export const stepSim = (s: RunState, dtSecRaw: number) => {
 
     if (!disc.grounded) {
       disc.groundBlend = 0
+    }
+
+    // Slope acceleration bonus: extra acceleration down slopes when grounded.
+    if (disc.grounded && disc.groundBlend > 0) {
+      // The ground normal points "up" away from the surface.
+      // The slope tangent pointing "downhill/right" is perpendicular to the normal.
+      // For a normal (nx, ny), the right-perpendicular tangent is (ny, -nx).
+      const n = disc.groundN
+      const slopeTangent = { x: n.y, y: -n.x }
+      
+      // Only apply bonus if the slope is descending (tangent points rightward and downward).
+      // slopeTangent.x > 0 means rightward, slopeTangent.y > 0 means downward (y+ is down).
+      if (slopeTangent.x > 0 && slopeTangent.y > 0) {
+        // Apply bonus acceleration along the slope tangent, scaled by groundBlend for smooth landing.
+        const bonusMag = SLOPE_ACCEL_BONUS * disc.groundBlend
+        disc.v.x += slopeTangent.x * bonusMag * h
+        disc.v.y += slopeTangent.y * bonusMag * h
+      }
     }
 
     // Ground recharge for jet energy (Noita-style: only when grounded and not thrusting).
