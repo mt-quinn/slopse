@@ -45,4 +45,10 @@ input {
   font-family: inherit;
 }
 
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 
