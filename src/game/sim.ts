@@ -4,7 +4,7 @@ import { coinHit, closestPointOnSegment, querySegIndicesAabb, segNormalUp } from
 import { JET_MAX_ENERGY } from './tuning'
 
 const GRAVITY = 1400 // px/s^2
-const JET_ACCEL = 1650 // px/s^2 upwards when thrusting
+const JET_ACCEL = 2475 // px/s^2 upwards when thrusting (increased by 50% from 1650)
 const AIR_DRAG = 0.06 // quadratic-ish via dt-stable multiplier
 const MAX_SPEED = 2400
 
@@ -15,7 +15,7 @@ const GROUND_SNAP_DIST = 4
 // This keeps mild slopes from instantly nuking forward speed on contact.
 const LANDING_BLEND_TIME = 0.14
 const LANDING_VEL_TC = 0.10
-const LANDING_PRESERVE_SPEED = 0.75
+const LANDING_PRESERVE_SPEED = 0.90
 
 const MAX_SUBSTEPS = 6
 
