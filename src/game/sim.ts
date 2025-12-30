@@ -1,4 +1,4 @@
-import { clamp, dot, len, mul, normalize, sub, type Vec2 } from './math'
+import { clamp, dot, len, sub, type Vec2 } from './math'
 import type { RunState } from './state'
 import { coinHit, closestPointOnSegment, querySegIndicesAabb, segNormalUp } from './track'
 import { JET_MAX_ENERGY } from './tuning'
@@ -6,7 +6,6 @@ import { JET_MAX_ENERGY } from './tuning'
 const GRAVITY = 1400 // px/s^2
 const JET_ACCEL = 2475 // px/s^2 upwards when thrusting (increased by 50% from 1650)
 const AIR_DRAG = 0.06 // quadratic-ish via dt-stable multiplier
-const MAX_SPEED = 2400
 
 const GROUND_STICK_EPS = 0.9
 const GROUND_SNAP_DIST = 4
@@ -18,13 +17,6 @@ const LANDING_VEL_TC = 0.10
 const LANDING_PRESERVE_SPEED = 0.90
 
 const MAX_SUBSTEPS = 6
-
-const capSpeed = (v: Vec2) => {
-  const s = Math.hypot(v.x, v.y)
-  if (s <= MAX_SPEED) return v
-  const k = MAX_SPEED / Math.max(1e-6, s)
-  return { x: v.x * k, y: v.y * k }
-}
 
 const dtStableDrag = (v: Vec2, k: number, dt: number) => {
   // Exponential decay: v *= exp(-k*dt)
@@ -68,7 +60,6 @@ export const stepSim = (s: RunState, dtSecRaw: number) => {
     // Integrate velocity.
     disc.v.x += ax * h
     disc.v.y += ay * h
-    disc.v = capSpeed(disc.v)
 
     // Air drag (very light; mostly for stability on mobile).
     disc.v = dtStableDrag(disc.v, AIR_DRAG, h)
