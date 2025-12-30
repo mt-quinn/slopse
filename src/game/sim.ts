@@ -1,4 +1,4 @@
-import { clamp, dot, len, mul, normalize, sub, type Vec2 } from './math'
+import { clamp, dot, len, sub, type Vec2 } from './math'
 import type { RunState } from './state'
 import { coinHit, closestPointOnSegment, querySegIndicesAabb, segNormalUp } from './track'
 import { JET_MAX_ENERGY } from './tuning'
@@ -6,7 +6,6 @@ import { JET_MAX_ENERGY } from './tuning'
 const GRAVITY = 1400 // px/s^2
 const JET_ACCEL = 1650 // px/s^2 upwards when thrusting
 const AIR_DRAG = 0.06 // quadratic-ish via dt-stable multiplier
-const MAX_SPEED = 2400
 
 const GROUND_STICK_EPS = 0.9
 const GROUND_SNAP_DIST = 4
@@ -20,10 +19,8 @@ const LANDING_PRESERVE_SPEED = 0.75
 const MAX_SUBSTEPS = 6
 
 const capSpeed = (v: Vec2) => {
-  const s = Math.hypot(v.x, v.y)
-  if (s <= MAX_SPEED) return v
-  const k = MAX_SPEED / Math.max(1e-6, s)
-  return { x: v.x * k, y: v.y * k }
+  // Speed cap removed - no maximum speed limit
+  return v
 }
 
 const dtStableDrag = (v: Vec2, k: number, dt: number) => {
