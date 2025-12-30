@@ -237,12 +237,33 @@ export default function App() {
   )
 
   // Pointer input: press anywhere to thrust; release to stop.
+  // Also detect triple-tap for quick restart.
   useEffect(() => {
+    const tapTimes: number[] = []
+    const TRIPLE_TAP_WINDOW_MS = 500
+    
     const onDown = (e: PointerEvent) => {
       e.preventDefault()
       const s = stateRef.current
       if (!s) return
       if (paused) return
+      
+      // Triple-tap restart detection (during active gameplay only)
+      if (!s.dead && !s.finished && s.timeMs > 0) {
+        const now = Date.now()
+        tapTimes.push(now)
+        // Keep only recent taps within the time window
+        while (tapTimes.length > 0 && now - tapTimes[0]! > TRIPLE_TAP_WINDOW_MS) {
+          tapTimes.shift()
+        }
+        // If we have 3 taps within the window, restart
+        if (tapTimes.length >= 3) {
+          tapTimes.length = 0
+          restart()
+          return
+        }
+      }
+      
       if (s.dead || s.finished) return
       if (s.input.thrustPointerId != null) return
       startRunIfNeeded()
@@ -265,7 +286,7 @@ export default function App() {
       window.removeEventListener('pointerup', onUp as any)
       window.removeEventListener('pointercancel', onUp as any)
     }
-  }, [paused, startRunIfNeeded])
+  }, [paused, startRunIfNeeded, restart])
 
   // Keyboard fallback.
   useEffect(() => {
