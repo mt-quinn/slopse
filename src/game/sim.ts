@@ -18,11 +18,6 @@ const LANDING_PRESERVE_SPEED = 0.75
 
 const MAX_SUBSTEPS = 6
 
-const capSpeed = (v: Vec2) => {
-  // Speed cap removed - no maximum speed limit
-  return v
-}
-
 const dtStableDrag = (v: Vec2, k: number, dt: number) => {
   // Exponential decay: v *= exp(-k*dt)
   const f = Math.exp(-k * dt)
@@ -65,7 +60,6 @@ export const stepSim = (s: RunState, dtSecRaw: number) => {
     // Integrate velocity.
     disc.v.x += ax * h
     disc.v.y += ay * h
-    disc.v = capSpeed(disc.v)
 
     // Air drag (very light; mostly for stability on mobile).
     disc.v = dtStableDrag(disc.v, AIR_DRAG, h)
