@@ -253,7 +253,7 @@ export default function App() {
         const now = Date.now()
         tapTimes.push(now)
         // Keep only recent taps within the time window
-        while (tapTimes.length > 0 && now - tapTimes[0]! > TRIPLE_TAP_WINDOW_MS) {
+        while (tapTimes.length > 0 && now - tapTimes[0] > TRIPLE_TAP_WINDOW_MS) {
           tapTimes.shift()
         }
         // If we have 3 taps within the window, restart
