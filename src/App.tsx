@@ -353,6 +353,9 @@ export default function App() {
     setPaused(false)
   }, [defaultGhost, newRunToken, replayRun, startReplay, track])
 
+  // Triple-tap restart (works while actively running; does nothing on overlays/replay).
+  const tapTimesRef = useRef<number[]>([])
+
   // Pointer input: press anywhere to thrust; release to stop.
   useEffect(() => {
     const onDown = (e: PointerEvent) => {
@@ -367,6 +370,21 @@ export default function App() {
       if (paused) return
       if (s.dead || s.finished) return
       if (s.input.thrustPointerId != null) return
+
+      // Detect triple tap: three pointer downs within a short window.
+      {
+        const now = performance.now()
+        const arr = tapTimesRef.current
+        arr.push(now)
+        // keep only recent taps
+        while (arr.length && now - arr[0]! > 650) arr.shift()
+        if (arr.length >= 3) {
+          tapTimesRef.current = []
+          e.preventDefault()
+          restart()
+          return
+        }
+      }
 
       // Only prevent defaults (text selection, scroll gestures) when we actually take over the pointer for thrust.
       e.preventDefault()
@@ -394,6 +412,7 @@ export default function App() {
 
   // Keyboard fallback.
   useEffect(() => {
+    const spaceTimes: number[] = []
     const onKey = (e: KeyboardEvent, isDown: boolean) => {
       if (e.key !== ' ' && e.code !== 'Space') return
       const s = stateRef.current
@@ -401,7 +420,21 @@ export default function App() {
       if (replayRef.current) return
       if (paused) return
       if (s.dead || s.finished) return
-      if (isDown) startRunIfNeeded()
+      if (isDown) {
+        // Triple-space restart: three Space keydowns within a short window.
+        const now = performance.now()
+        spaceTimes.push(now)
+        while (spaceTimes.length && now - spaceTimes[0]! > 650) spaceTimes.shift()
+        if (spaceTimes.length >= 3) {
+          spaceTimes.length = 0
+          e.preventDefault()
+          s.input.thrust = false
+          s.input.thrustPointerId = null
+          restart()
+          return
+        }
+        startRunIfNeeded()
+      }
       s.input.thrust = isDown
       e.preventDefault()
     }
@@ -413,7 +446,7 @@ export default function App() {
       window.removeEventListener('keydown', down)
       window.removeEventListener('keyup', up)
     }
-  }, [paused, startRunIfNeeded])
+  }, [paused, restart, startRunIfNeeded])
 
   // Pause toggle (Escape)
   useEffect(() => {

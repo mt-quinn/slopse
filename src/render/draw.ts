@@ -372,38 +372,37 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       }
     }
 
-    // Screen-space prompt
-    if (!s.runStarted && !s.dead && !s.finished) {
-      ctx.save()
-      ctx.globalCompositeOperation = 'source-over'
-      ctx.font = "900 14px 'Oxanium', system-ui, sans-serif"
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      const label = 'Tap / Space to start'
-      const x = w * 0.5
-      const y = h * 0.70
-      const tw = ctx.measureText(label).width
-      const padX = 14
-      const boxW = tw + padX * 2
-      const boxH = 30
-      const bx = x - boxW / 2
-      const by = y - boxH / 2
-      ctx.fillStyle = 'rgba(10, 8, 22, 0.62)'
-      ctx.strokeStyle = 'rgba(255,255,255,0.12)'
-      ctx.lineWidth = 2
-      ctx.beginPath()
-      const r = 14
-      ctx.moveTo(bx + r, by)
-      ctx.arcTo(bx + boxW, by, bx + boxW, by + boxH, r)
-      ctx.arcTo(bx + boxW, by + boxH, bx, by + boxH, r)
-      ctx.arcTo(bx, by + boxH, bx, by, r)
-      ctx.arcTo(bx, by, bx + boxW, by, r)
-      ctx.closePath()
-      ctx.fill()
-      ctx.stroke()
-      ctx.fillStyle = 'rgba(255,246,213,0.95)'
-      ctx.fillText(label, x, y)
-      ctx.restore()
+    // Instruction hint:
+    // - Shows before start
+    // - Continues until 2s after start, then fades out
+    // - No container; two lines
+    // - Hidden during replay (recording.active is false in replay)
+    if (!s.dead && !s.finished && s.recording.active) {
+      const t = s.timeMs / 1000
+      const showPre = !s.runStarted
+      const showPost = s.runStarted && t >= 0 && t < 2.0
+      if (showPre || showPost) {
+        const fade = !s.runStarted ? 1 : t < 1.5 ? 1 : clamp((2.0 - t) / 0.5, 0, 1)
+        const line1 = 'Tap to thrust'
+        const line2 = 'Triple tap to reset'
+        const x = w * 0.5
+        const y = h * 0.30
+
+        ctx.save()
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.globalAlpha = fade
+        ctx.font = "950 18px 'Oxanium', system-ui, sans-serif"
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillStyle = 'rgba(255,246,213,0.92)'
+        ctx.shadowColor = 'rgba(0,0,0,0.55)'
+        ctx.shadowBlur = 14
+        ctx.shadowOffsetY = 2
+
+        ctx.fillText(line1, x, y)
+        ctx.fillText(line2, x, y + 22)
+        ctx.restore()
+      }
     }
   })
 }
