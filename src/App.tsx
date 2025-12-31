@@ -88,7 +88,13 @@ export default function App() {
   const tempGhostRef = useRef<GhostRun | null>(null)
   const [replayRun, setReplayRun] = useState<RankedRun | null>(null)
   const [replayEnded, setReplayEnded] = useState(false)
-  const replayRef = useRef<{ samples: GhostRun['samples']; durationSec: number; t: number } | null>(null)
+  const replayRef = useRef<{
+    samples: GhostRun['samples']
+    durationSec: number
+    t: number
+    lastX: number
+    lastY: number
+  } | null>(null)
 
   type HudState = {
     timeMs: number
@@ -203,6 +209,8 @@ export default function App() {
         samples: r.replay.samples,
         durationSec: Math.max(0.001, r.replay.timeMs / 1000),
         t: 0,
+        lastX: r.replay.samples[0]?.x ?? track.start.p.x,
+        lastY: r.replay.samples[0]?.y ?? track.start.p.y,
       }
 
       const prev = stateRef.current
@@ -224,6 +232,7 @@ export default function App() {
         s.disc.p.y = p0.y
       }
       s.disc.v = { x: 0, y: 0 }
+          s.disc.rot = 0
 
       stateRef.current = s
       setHud({
@@ -489,6 +498,18 @@ export default function App() {
               s.disc.v.x = 0
               s.disc.v.y = 0
             }
+
+            // Roll visual during replay: integrate from actual replay displacement.
+            // Match sim's distance-based approach (Δθ = Δs/r) with the same readability scale (0.6).
+            const dx = p.x - r.lastX
+            const dy = p.y - r.lastY
+            const ds = Math.sign(dx || 0) * Math.hypot(dx, dy)
+            const rr = Math.max(1e-6, s.disc.r)
+            s.disc.rot += (ds / rr) * 0.6
+            if (s.disc.rot > Math.PI * 2 || s.disc.rot < -Math.PI * 2) s.disc.rot = s.disc.rot % (Math.PI * 2)
+            r.lastX = p.x
+            r.lastY = p.y
+
             s.disc.p.x = p.x
             s.disc.p.y = p.y
           }
