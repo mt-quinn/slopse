@@ -1,13 +1,17 @@
 import { clamp, dot, len, sub, type Vec2 } from './math'
-import { EDITED_TRACK_SOURCES } from './tracks.edited'
 
-export type TrackSegment = { a: Vec2; b: Vec2 }
+// Track surface type.
+// (Mag + kill fields were removed; boosters remain.)
+export type TrackMaterial = 'normal' | 'boost'
+
+export type TrackSegment = { a: Vec2; b: Vec2; mat: TrackMaterial }
 
 export type TrackCoin = { id: string; p: Vec2; r: number }
 
 export type TrackDef = {
   id: string
   name: string
+  trackHash: string
   start: { p: Vec2; v: Vec2 }
   finishX: number
   segments: TrackSegment[]
@@ -15,31 +19,14 @@ export type TrackDef = {
   medals: { bronzeMs: number; silverMs: number; goldMs: number }
 }
 
-// --- Authored track format (editor) ---
-// The game sim/collision uses `segments` (sampled line segments), but the editor needs a higher-level
-// representation with vertices + handles. We store cubic Bézier handles as vectors relative to the node.
-export type TrackPathNode = {
-  p: Vec2
-  // Incoming handle vector from p (relative). If omitted, treated as {0,0}.
-  in?: Vec2
-  // Outgoing handle vector from p (relative). If omitted, treated as {0,0}.
-  out?: Vec2
-}
+export const DAILY_TRACK_VERSION = 1
 
-export type TrackPath = {
-  id: string
-  nodes: TrackPathNode[]
-  closed?: boolean
+export const localDateKey = (d = new Date()) => {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
-
-export type TrackSource = Omit<TrackDef, 'segments'> & {
-  paths: TrackPath[]
-  // Sampling density for runtime segments.
-  sampleStepPx?: number
-}
-
-export const getTrackById = (id: string) => ALL_TRACKS.find((t) => t.id === id) ?? null
-export const getTrackSourceById = (id: string) => ALL_TRACK_SOURCES.find((t) => t.id === id) ?? null
 
 // --- Segment spatial index (performance) ---
 // Tracks are no longer assumed monotonic in X (Line Rider style). We use a simple spatial hash
@@ -190,565 +177,274 @@ export const buildCatmullRomSegments = (ctrl: Vec2[], stepPx: number): TrackSegm
     const dx = b.x - a.x
     const dy = b.y - a.y
     if (dx * dx + dy * dy < 1e-6) continue
-    segs.push({ a, b })
+    segs.push({ a, b, mat: 'normal' })
   }
   return segs
 }
 
-const vadd = (a: Vec2, b: Vec2): Vec2 => ({ x: a.x + b.x, y: a.y + b.y })
-const vsub = (a: Vec2, b: Vec2): Vec2 => ({ x: a.x - b.x, y: a.y - b.y })
-const vmul = (a: Vec2, k: number): Vec2 => ({ x: a.x * k, y: a.y * k })
-
-// Convert a polyline (or Catmull control points) into smooth nodes with symmetric in/out handles.
-// This is used to seed editor-editable data for our existing tracks.
-export const nodesFromCatmullCtrl = (ctrl: Vec2[]): TrackPathNode[] => {
-  const n = ctrl.length
-  if (n === 0) return []
-  if (n === 1) return [{ p: { ...ctrl[0]! } }]
-  const nodes: TrackPathNode[] = []
-  for (let i = 0; i < n; i++) {
-    const p = ctrl[i]!
-    const pPrev = ctrl[i - 1] ?? ctrl[i]!
-    const pNext = ctrl[i + 1] ?? ctrl[i]!
-    // Catmull tangent (uniform) at p.
-    const m = vmul(vsub(pNext, pPrev), 0.5)
-    // Hermite->Bezier: c1 = p + m/3, c2 = p - m/3 (for adjacent segment endpoints).
-    const h = vmul(m, 1 / 3)
-    nodes.push({ p: { ...p }, in: vmul(h, -1), out: h })
+const hash32 = (s: string) => {
+  // FNV-1a 32-bit
+  let h = 2166136261 >>> 0
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 16777619) >>> 0
   }
-  // For endpoints, bias tangents to be less aggressive.
-  const m0 = vsub(ctrl[1]!, ctrl[0]!)
-  nodes[0] = { p: { ...ctrl[0]! }, in: { x: 0, y: 0 }, out: vmul(m0, 1 / 3) }
-  const mn = vsub(ctrl[n - 1]!, ctrl[n - 2]!)
-  nodes[n - 1] = { p: { ...ctrl[n - 1]! }, in: vmul(mn, -1 / 3), out: { x: 0, y: 0 } }
-  return nodes
+  return h >>> 0
 }
 
-const evalCubic = (p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: number): Vec2 => {
-  const u = 1 - t
-  const tt = t * t
-  const uu = u * u
-  const uuu = uu * u
-  const ttt = tt * t
+const hex8 = (u: number) => (u >>> 0).toString(16).padStart(8, '0')
+
+const hashTrackSegments = (segs: TrackSegment[]) => {
+  // FNV-1a over integerized segment endpoints + material, stable across runs.
+  let h = 2166136261 >>> 0
+  const mix = (n: number) => {
+    h ^= n >>> 0
+    h = Math.imul(h, 16777619) >>> 0
+  }
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i]!
+    mix(Math.round(s.a.x))
+    mix(Math.round(s.a.y))
+    mix(Math.round(s.b.x))
+    mix(Math.round(s.b.y))
+    mix(s.mat === 'boost' ? 1 : 0)
+  }
+  return hex8(h)
+}
+
+const mkRng = (seed: number) => {
+  let x = (seed >>> 0) || 0x12345678
+  const u01 = () => {
+    // xorshift32
+    x ^= x << 13
+    x ^= x >>> 17
+    x ^= x << 5
+    return ((x >>> 0) & 0xffffffff) / 0x100000000
+  }
+  const s = () => u01() * 2 - 1
   return {
-    x: uuu * p0.x + 3 * uu * t * p1.x + 3 * u * tt * p2.x + ttt * p3.x,
-    y: uuu * p0.y + 3 * uu * t * p1.y + 3 * u * tt * p2.y + ttt * p3.y,
+    u01,
+    s,
+    int: (a: number, b: number) => Math.floor(u01() * (b - a + 1)) + a,
+    pick: <T,>(arr: T[]) => arr[Math.floor(u01() * arr.length)]!,
   }
 }
 
-export const buildBezierSegmentsFromPaths = (paths: TrackPath[], stepPx: number): TrackSegment[] => {
-  const segs: TrackSegment[] = []
-  const step = Math.max(3, stepPx)
-  for (const path of paths) {
-    const nodes = path.nodes
-    const closed = !!path.closed
-    const count = nodes.length
-    if (count < 2) continue
-    const segCount = closed ? count : count - 1
-    for (let i = 0; i < segCount; i++) {
-      const a = nodes[i]!
-      const b = nodes[(i + 1) % count]!
-      const p0 = a.p
-      const p3 = b.p
-      const c1 = vadd(p0, a.out ?? { x: 0, y: 0 })
-      const c2 = vadd(p3, b.in ?? { x: 0, y: 0 })
+// Reduce extreme peak height a bit so dailies remain summit-able with current jet rules.
+const clampY = (y: number) => clamp(y, 140, 1200)
 
-      // Estimate curve length with a coarse polyline for step count.
-      const lEst =
-        Math.hypot(c1.x - p0.x, c1.y - p0.y) +
-        Math.hypot(c2.x - c1.x, c2.y - c1.y) +
-        Math.hypot(p3.x - c2.x, p3.y - c2.y)
-      const steps = Math.max(6, Math.ceil(lEst / step))
-      let prev = { ...p0 }
-      for (let k = 1; k <= steps; k++) {
-        const t = k / steps
-        const p = evalCubic(p0, c1, c2, p3, t)
-        const dx = p.x - prev.x
-        const dy = p.y - prev.y
-        if (dx * dx + dy * dy > 1e-6) segs.push({ a: prev, b: p })
-        prev = p
-      }
+const ease01 = (t: number) => t * t * (3 - 2 * t)
+
+const enforceGradeClamp = (ysIn: number[], dx: number) => {
+  // Clamp *only* truly extreme grades (keeps playability, doesn't flatten macro-shapes).
+  const ys = ysIn.slice()
+  const maxDownSlope = 1.35
+  const maxUpSlope = 0.95
+  const maxDy = maxDownSlope * Math.max(1, dx)
+  const minDy = -maxUpSlope * Math.max(1, dx)
+  for (let i = 1; i < ys.length; i++) {
+    const prev = ys[i - 1]!
+    const cur = ys[i]!
+    const dy = clamp(cur - prev, minDy, maxDy)
+    ys[i] = clampY(prev + dy)
+  }
+  return ys
+}
+
+const ensureVerticalRange = (ysIn: number[], wantRange: number) => {
+  let minY = Infinity
+  let maxY = -Infinity
+  for (const y of ysIn) {
+    minY = Math.min(minY, y)
+    maxY = Math.max(maxY, y)
+  }
+  const range = maxY - minY
+  if (range >= wantRange) return ysIn
+  const mid = (minY + maxY) * 0.5
+  const k = wantRange / Math.max(1, range)
+  return ysIn.map((y) => clampY(mid + (y - mid) * k))
+}
+
+const generateDailyYs = (ctrlCount: number, dx: number, rng: ReturnType<typeof mkRng>) => {
+  const ys: number[] = new Array(ctrlCount).fill(0)
+  const startY = clampY(rng.int(480, 620))
+
+  // Warmup that feels like Longline: short pad → meaningful descent → recovery → small rollers.
+  const depth = rng.int(420, 720)
+  const recovery = rng.int(140, 260)
+  const rA = rng.int(90, 180)
+  const rB = rng.int(70, 160)
+  const yOff = [
+    0,
+    rng.int(-8, 16),
+    Math.round(depth * 0.10),
+    Math.round(depth * 0.28),
+    Math.round(depth * 0.50),
+    Math.round(depth * 0.74),
+    depth,
+    Math.round(depth - (depth - recovery) * 0.55),
+    recovery,
+    recovery + rA,
+    Math.max(0, recovery - Math.round(rB * 0.65)),
+    recovery + Math.round(rB * 0.95),
+    recovery + Math.round(rB * 0.25),
+  ]
+  const warmEnd = Math.min(ctrlCount - 1, 12)
+  for (let i = 0; i <= warmEnd; i++) ys[i] = clampY(startY + yOff[i]!)
+
+  let i = warmEnd + 1
+  let y = ys[warmEnd]!
+
+  const addSection = (steps: number, dyTotal: number, bumps: number, bumpAmp: number) => {
+    const y0 = y
+    for (let k = 1; k <= steps; k++) {
+      if (i >= ctrlCount) return
+      const t = k / steps
+      const base = y0 + ease01(t) * dyTotal
+      const wave = bumps > 0 ? Math.sin(t * Math.PI * 2 * bumps) * bumpAmp : 0
+      ys[i] = clampY(base + wave)
+      y = ys[i]!
+      i++
     }
   }
-  return segs
+
+  const remaining = () => ctrlCount - i
+
+  // Macro structure: we always include a cathedral-style deep dip + ridge.
+  // Then we interleave long ski downs + roller gardens until we reach the end.
+  // (These are the beats that make Longline/Cathedral feel "intentional".)
+  while (remaining() > 10) {
+    const r = remaining()
+    if (r < 20) break
+
+    const pick = rng.pick(['ski', 'rollers', 'cathedral'] as const)
+    if (pick === 'ski') {
+      const steps = rng.int(10, 18) // ~2.5k–5k px
+      const dy = rng.int(380, 820)
+      addSection(steps, dy, rng.int(1, 2), rng.int(60, 140))
+      // recovery bump
+      addSection(rng.int(6, 10), -rng.int(180, 420), 1, rng.int(40, 110))
+    } else if (pick === 'rollers') {
+      const steps = rng.int(12, 22)
+      const drift = rng.int(-180, 180)
+      addSection(steps, drift, rng.int(3, 6), rng.int(170, 320))
+    } else {
+      // Cathedral beat: deep drop + tall ridge.
+      const dropSteps = rng.int(8, 14)
+      const drop = rng.int(720, 1250)
+      addSection(dropSteps, drop, 1, rng.int(90, 170))
+
+      const ridgeSteps = rng.int(9, 16)
+      const ridge = -rng.int(780, 1350)
+      addSection(ridgeSteps, ridge, 1, rng.int(80, 150))
+    }
+  }
+
+  // Finish: guide toward a reasonable end height (no weird cliff endings).
+  const endY = clampY(rng.int(280, 520))
+  const stepsToEnd = Math.max(6, remaining() - 1)
+  const dyEnd = endY - y
+  addSection(stepsToEnd, dyEnd, rng.int(1, 2), rng.int(40, 90))
+
+  // Fill any leftover slots.
+  while (i < ctrlCount) {
+    ys[i] = y
+    i++
+  }
+
+  // Ensure we have Cathedral-like vertical range (slightly reduced to fit jet limits).
+  const ys2 = ensureVerticalRange(ys, rng.int(600, 900))
+  return enforceGradeClamp(ys2, dx)
 }
 
-export const compileTrack = (src: TrackSource): TrackDef => {
-  const stepPx = Math.max(6, src.sampleStepPx ?? 16)
-  const segments = buildBezierSegmentsFromPaths(src.paths, stepPx)
-  return {
-    id: src.id,
-    name: src.name,
-    start: src.start,
-    finishX: src.finishX,
-    segments,
-    coins: src.coins,
-    medals: src.medals,
+const applyBoostWindows = (segs: TrackSegment[], rng: ReturnType<typeof mkRng>, boostCount: number) => {
+  if (segs.length < 20) return
+
+  // Candidate indices for boosters.
+  const uphill: number[] = []
+  const downhillMid: number[] = []
+
+  const slope = (s: TrackSegment) => {
+    const dx = s.b.x - s.a.x
+    const dy = s.b.y - s.a.y
+    return dy / Math.max(1e-6, dx)
+  }
+
+  // Uphill candidates (dy/dx < 0).
+  for (let i = 0; i < segs.length; i++) {
+    const m = slope(segs[i]!)
+    if (m < -0.22) uphill.push(i)
+  }
+
+  // Downhill runs: choose midpoints (landing approach).
+  const downThresh = 0.26
+  let i = 0
+  while (i < segs.length) {
+    while (i < segs.length && slope(segs[i]!) <= downThresh) i++
+    const start = i
+    while (i < segs.length && slope(segs[i]!) > downThresh) i++
+    const end = i // exclusive
+    const lenRun = end - start
+    if (lenRun >= 18) downhillMid.push(start + Math.floor(lenRun / 2))
+  }
+
+  const candidates = [...uphill, ...downhillMid]
+  if (candidates.length === 0) return
+
+  // Pick spaced-apart windows.
+  const chosen: number[] = []
+  const minSep = 120 // segment index spacing (roughly distance-based)
+  let guard = 0
+  while (chosen.length < boostCount && guard++ < 2000) {
+    const idx = candidates[rng.int(0, candidates.length - 1)]!
+    if (chosen.some((j) => Math.abs(j - idx) < minSep)) continue
+    chosen.push(idx)
+  }
+
+  // Apply a short boost window around each chosen index.
+  for (const c of chosen) {
+    const w = rng.int(10, 18)
+    const a = Math.max(0, c - Math.floor(w / 2))
+    const b = Math.min(segs.length - 1, c + Math.floor(w / 2))
+    for (let k = a; k <= b; k++) segs[k]!.mat = 'boost'
   }
 }
 
-export const TRACK_001: TrackSource = {
-  id: 'track-001',
-  name: 'Warmup Slope',
-  start: { p: { x: 40, y: 260 }, v: { x: 220, y: 0 } },
-  finishX: 2600,
-  medals: { bronzeMs: 26000, silverMs: 19000, goldMs: 14500 },
-  sampleStepPx: 18,
-  paths: [
-    {
-      id: 'p1',
-      nodes: nodesFromCatmullCtrl([
-      { x: 0, y: 320 },
-      { x: 380, y: 320 },
-      { x: 720, y: 240 },
-      { x: 1040, y: 300 },
-      { x: 1380, y: 520 },
-      { x: 1540, y: 520 },
-      { x: 1760, y: 360 },
-      { x: 1960, y: 420 },
-      { x: 2140, y: 320 },
-      { x: 2360, y: 360 },
-      { x: 2600, y: 280 },
-      ]),
-    },
-  ],
-  coins: [],
+export const makeDailyTrack = (dateKey = localDateKey()): TrackDef => {
+  const seed = hash32(`${DAILY_TRACK_VERSION}:${dateKey}`)
+  const rng = mkRng(seed)
+
+  // Target 30–60s feel: long, fast, and varied.
+  const finishX = rng.int(19000, 27500)
+  const dx = rng.int(220, 290)
+  const ctrlCount = Math.max(28, Math.floor(finishX / dx) + 1)
+
+  const ys = generateDailyYs(ctrlCount, dx, rng)
+  const ctrl: Vec2[] = ys.map((y, i) => ({ x: i * dx, y }))
+
+  const segments = buildCatmullRomSegments(ctrl, 16)
+
+  const boostCount = rng.int(1, 10)
+  applyBoostWindows(segments, rng, boostCount)
+
+  // Medals are currently not the focus; keep placeholders so sim can still compute a RunResult.
+  const goldMs = rng.int(34000, 56000)
+  const silverMs = Math.round(goldMs * 1.05)
+  const bronzeMs = Math.round(goldMs * 1.1)
+
+  const id = `daily-${dateKey}-v${DAILY_TRACK_VERSION}`
+  const trackHash = hashTrackSegments(segments)
+  return {
+    id,
+    name: `Daily — ${dateKey}`,
+    trackHash,
+    start: { p: { x: 40, y: ctrl[0]!.y - 40 }, v: { x: 260, y: 0 } },
+    finishX,
+    segments,
+    coins: [],
+    medals: { bronzeMs, silverMs, goldMs },
+  }
 }
-
-export const TRACK_002: TrackSource = {
-  id: 'track-002',
-  name: 'Longline (10k)',
-  start: { p: { x: 40, y: 260 }, v: { x: 240, y: 0 } },
-  // ~4x+ length vs track-001 (2600). This is ~10.6k.
-  finishX: 10600,
-  // Placeholder defaults; `App.tsx` will estimate and cache medals for this track on first load.
-  medals: { bronzeMs: 0, silverMs: 0, goldMs: 0 },
-  sampleStepPx: 16,
-  paths: [
-    {
-      id: 'p1',
-      nodes: nodesFromCatmullCtrl([
-      // Section 1: warmup into first descent
-      { x: 0, y: 320 },
-      { x: 500, y: 320 },
-      { x: 900, y: 240 },
-      { x: 1300, y: 300 },
-      { x: 1700, y: 520 },
-      { x: 1900, y: 520 },
-      { x: 2200, y: 360 },
-      { x: 2500, y: 420 },
-      { x: 2850, y: 300 },
-      { x: 3200, y: 360 },
-      { x: 3500, y: 260 },
-
-      // Section 2: long downhill “ski” with a clean launch
-      { x: 3900, y: 340 },
-      { x: 4300, y: 560 },
-      { x: 4700, y: 610 },
-      { x: 5100, y: 520 },
-      { x: 5500, y: 360 },
-      { x: 5900, y: 300 },
-
-      // Section 3: rolling hills (reward pump timing)
-      { x: 6350, y: 360 },
-      { x: 6750, y: 300 },
-      { x: 7150, y: 420 },
-      { x: 7550, y: 280 },
-      { x: 7950, y: 420 },
-      { x: 8350, y: 300 },
-
-      // Section 4: high-speed valley + climb (tests jet energy management)
-      { x: 8750, y: 420 },
-      { x: 9150, y: 640 },
-      { x: 9550, y: 610 },
-      { x: 9900, y: 420 },
-      { x: 10250, y: 320 },
-      { x: 10600, y: 280 },
-      ]),
-    },
-  ],
-  coins: [],
-}
-
-const mkTrack = (
-  id: string,
-  name: string,
-  finishX: number,
-  ctrl: Vec2[],
-  startY: number,
-  v0: number,
-): TrackSource => ({
-  id,
-  name,
-  start: { p: { x: 40, y: startY }, v: { x: v0, y: 0 } },
-  finishX,
-  medals: { bronzeMs: 0, silverMs: 0, goldMs: 0 },
-  sampleStepPx: 16,
-  paths: [{ id: 'p1', nodes: nodesFromCatmullCtrl(ctrl) }],
-  // Coins are authored (track editor). Default: none.
-  coins: [],
-})
-
-export const TRACK_003 = mkTrack(
-  'track-003',
-  'Skyhooks',
-  8200,
-  [
-    { x: 0, y: 360 },
-    { x: 520, y: 360 },
-    { x: 980, y: 260 },
-    { x: 1400, y: 520 },
-    { x: 1800, y: 520 },
-    { x: 2300, y: 260 },
-    { x: 2900, y: 220 },
-    { x: 3500, y: 420 },
-    { x: 4200, y: 300 },
-    { x: 4900, y: 520 },
-    { x: 5600, y: 260 },
-    { x: 6350, y: 340 },
-    { x: 7100, y: 240 },
-    { x: 8200, y: 300 },
-  ],
-  300,
-  250,
-)
-
-export const TRACK_004 = mkTrack(
-  'track-004',
-  'The Deep',
-  9200,
-  [
-    { x: 0, y: 280 },
-    { x: 650, y: 300 },
-    { x: 1200, y: 520 },
-    { x: 1700, y: 700 },
-    { x: 2200, y: 720 },
-    { x: 2800, y: 640 },
-    { x: 3400, y: 420 },
-    { x: 4100, y: 340 },
-    { x: 4800, y: 520 },
-    { x: 5600, y: 740 },
-    { x: 6500, y: 720 },
-    { x: 7400, y: 420 },
-    { x: 8200, y: 320 },
-    { x: 9200, y: 300 },
-  ],
-  240,
-  260,
-)
-
-export const TRACK_005 = mkTrack(
-  'track-005',
-  'Roller Garden',
-  7600,
-  [
-    { x: 0, y: 360 },
-    { x: 420, y: 320 },
-    { x: 780, y: 420 },
-    { x: 1120, y: 280 },
-    { x: 1460, y: 440 },
-    { x: 1820, y: 260 },
-    { x: 2200, y: 440 },
-    { x: 2580, y: 260 },
-    { x: 2960, y: 440 },
-    { x: 3340, y: 260 },
-    { x: 3720, y: 440 },
-    { x: 4100, y: 260 },
-    { x: 4600, y: 360 },
-    { x: 5200, y: 300 },
-    { x: 5900, y: 380 },
-    { x: 6600, y: 260 },
-    { x: 7600, y: 300 },
-  ],
-  320,
-  255,
-)
-
-export const TRACK_006 = mkTrack(
-  'track-006',
-  'Staircase',
-  8400,
-  [
-    { x: 0, y: 600 },
-    { x: 600, y: 600 },
-    { x: 900, y: 520 },
-    { x: 1400, y: 520 },
-    { x: 1700, y: 440 },
-    { x: 2200, y: 440 },
-    { x: 2500, y: 360 },
-    { x: 3000, y: 360 },
-    { x: 3300, y: 300 },
-    { x: 3900, y: 300 },
-    { x: 4300, y: 340 },
-    { x: 4800, y: 260 },
-    { x: 5600, y: 320 },
-    { x: 6400, y: 260 },
-    { x: 7200, y: 320 },
-    { x: 8400, y: 280 },
-  ],
-  520,
-  270,
-)
-
-export const TRACK_007 = mkTrack(
-  'track-007',
-  'Cliffside',
-  9800,
-  [
-    { x: 0, y: 380 },
-    { x: 900, y: 340 },
-    { x: 1500, y: 520 },
-    { x: 2200, y: 620 },
-    { x: 2900, y: 260 },
-    { x: 3400, y: 260 },
-    { x: 4200, y: 520 },
-    { x: 5000, y: 620 },
-    { x: 5600, y: 300 },
-    { x: 6300, y: 340 },
-    { x: 7000, y: 520 },
-    { x: 7900, y: 660 },
-    { x: 8600, y: 320 },
-    { x: 9800, y: 300 },
-  ],
-  300,
-  260,
-)
-
-export const TRACK_008 = mkTrack(
-  'track-008',
-  'Low Orbit',
-  9000,
-  [
-    { x: 0, y: 560 },
-    { x: 800, y: 520 },
-    { x: 1500, y: 420 },
-    { x: 2300, y: 260 },
-    { x: 3200, y: 240 },
-    { x: 4100, y: 260 },
-    { x: 4800, y: 340 },
-    { x: 5500, y: 260 },
-    { x: 6200, y: 220 },
-    { x: 7000, y: 260 },
-    { x: 7900, y: 320 },
-    { x: 9000, y: 280 },
-  ],
-  520,
-  265,
-)
-
-export const TRACK_009 = mkTrack(
-  'track-009',
-  'Canyon Echo',
-  10400,
-  [
-    { x: 0, y: 320 },
-    { x: 700, y: 300 },
-    { x: 1300, y: 420 },
-    { x: 1900, y: 680 },
-    { x: 2600, y: 720 },
-    { x: 3400, y: 520 },
-    { x: 4200, y: 320 },
-    { x: 5000, y: 520 },
-    { x: 5800, y: 720 },
-    { x: 6600, y: 660 },
-    { x: 7400, y: 420 },
-    { x: 8200, y: 300 },
-    { x: 9000, y: 440 },
-    { x: 9800, y: 340 },
-    { x: 10400, y: 300 },
-  ],
-  280,
-  260,
-)
-
-export const TRACK_010 = mkTrack(
-  'track-010',
-  'Needlethread',
-  7800,
-  [
-    { x: 0, y: 520 },
-    { x: 700, y: 520 },
-    { x: 1200, y: 360 },
-    { x: 1600, y: 260 },
-    { x: 2100, y: 300 },
-    { x: 2700, y: 500 },
-    { x: 3200, y: 520 },
-    { x: 3800, y: 360 },
-    { x: 4300, y: 240 },
-    { x: 4900, y: 300 },
-    { x: 5600, y: 520 },
-    { x: 6400, y: 420 },
-    { x: 7200, y: 280 },
-    { x: 7800, y: 300 },
-  ],
-  460,
-  260,
-)
-
-export const TRACK_011 = mkTrack(
-  'track-011',
-  'Afterburn Valley',
-  11200,
-  [
-    { x: 0, y: 320 },
-    { x: 900, y: 300 },
-    { x: 1600, y: 520 },
-    { x: 2400, y: 680 },
-    { x: 3400, y: 740 },
-    { x: 4400, y: 520 },
-    { x: 5200, y: 280 },
-    { x: 6100, y: 320 },
-    { x: 7100, y: 560 },
-    { x: 8100, y: 740 },
-    { x: 9100, y: 520 },
-    { x: 10000, y: 300 },
-    { x: 11200, y: 280 },
-  ],
-  280,
-  260,
-)
-
-export const TRACK_012 = mkTrack(
-  'track-012',
-  'Microgravity',
-  8600,
-  [
-    { x: 0, y: 420 },
-    { x: 700, y: 360 },
-    { x: 1400, y: 300 },
-    { x: 2200, y: 280 },
-    { x: 3000, y: 300 },
-    { x: 3800, y: 320 },
-    { x: 4600, y: 280 },
-    { x: 5400, y: 300 },
-    { x: 6200, y: 320 },
-    { x: 7000, y: 300 },
-    { x: 7800, y: 280 },
-    { x: 8600, y: 300 },
-  ],
-  360,
-  265,
-)
-
-export const TRACK_013 = mkTrack(
-  'track-013',
-  'Cathedral Drop',
-  10400,
-  [
-    // Big vertical variation: deep drops + tall climbs.
-    { x: 0, y: 320 },
-    { x: 420, y: 320 },
-    { x: 900, y: 420 },
-    { x: 1350, y: 780 },
-    { x: 1750, y: 1180 },
-    { x: 2200, y: 1280 }, // deep valley floor
-    { x: 2700, y: 980 },
-    { x: 3200, y: 520 },
-    { x: 3650, y: 220 }, // high ridge
-    { x: 4100, y: 260 },
-    { x: 4700, y: 760 },
-    { x: 5350, y: 1080 },
-    { x: 6000, y: 740 },
-    { x: 6600, y: 260 }, // second ridge
-    { x: 7100, y: 180 },
-    { x: 7700, y: 520 },
-    { x: 8300, y: 1040 },
-    { x: 8800, y: 1320 }, // second deep dip
-    { x: 9300, y: 980 },
-    { x: 9800, y: 520 },
-    { x: 10400, y: 300 },
-  ],
-  260,
-  245,
-)
-
-export const TRACK_014: TrackSource = {
-  id: 'track-014',
-  name: 'Sky Loop (Split)',
-  start: { p: { x: 40, y: 640 }, v: { x: 260, y: 0 } },
-  finishX: 9200,
-  medals: { bronzeMs: 0, silverMs: 0, goldMs: 0 },
-  coins: [],
-  sampleStepPx: 14,
-  paths: [
-    // Approach + launch ramp (ends near the loop, but NOT connected)
-    {
-      id: 'p-approach',
-      nodes: nodesFromCatmullCtrl([
-        { x: 0, y: 640 },
-        { x: 700, y: 640 },
-        { x: 1200, y: 700 },
-        { x: 1700, y: 920 }, // build speed in a dip
-        { x: 2100, y: 760 },
-        { x: 2400, y: 520 },
-        { x: 2620, y: 450 }, // launch lip
-      ]),
-    },
-
-    // Discontiguous loop above the ramp:
-    // This is an *open* loop with a gap on the bottom (between ~45° and ~135°),
-    // so you can enter/exit without any contiguous connection.
-    {
-      id: 'p-loop',
-      nodes: nodesFromCatmullCtrl(
-        (() => {
-          const cx = 2900
-          const cy = 260
-          const r = 240
-          const deg = (d: number) => (d * Math.PI) / 180
-          const angles = [135, 165, 195, 225, 255, 270, 285, 315, 345, 15, 45]
-          return angles.map((a) => ({
-            x: cx + r * Math.cos(deg(a)),
-            y: cy + r * Math.sin(deg(a)),
-          }))
-        })(),
-      ),
-    },
-
-    // Exit ramp (starts near loop exit, but NOT connected)
-    {
-      id: 'p-exit',
-      nodes: nodesFromCatmullCtrl([
-        { x: 3160, y: 470 },
-        { x: 3600, y: 610 },
-        { x: 4200, y: 520 },
-        { x: 4900, y: 720 },
-        { x: 5600, y: 520 },
-        { x: 6400, y: 660 },
-        { x: 7400, y: 520 },
-        { x: 8200, y: 600 },
-        { x: 9200, y: 520 },
-      ]),
-    },
-  ],
-}
-
-const BASE_TRACK_SOURCES: TrackSource[] = [
-  TRACK_002,
-  TRACK_003,
-  TRACK_004,
-  TRACK_005,
-  TRACK_006,
-  TRACK_007,
-  TRACK_008,
-  TRACK_009,
-  TRACK_010,
-  TRACK_011,
-  TRACK_012,
-  TRACK_013,
-  TRACK_014,
-  TRACK_001,
-]
-
-const mergeEdited = (base: TrackSource[], edited: TrackSource[]) => {
-  const byId = new Map<string, TrackSource>()
-  for (const t of base) byId.set(t.id, t)
-  for (const t of edited) byId.set(t.id, t)
-  return Array.from(byId.values())
-}
-
-export const ALL_TRACK_SOURCES: TrackSource[] = mergeEdited(BASE_TRACK_SOURCES, EDITED_TRACK_SOURCES)
-export const ALL_TRACKS: TrackDef[] = ALL_TRACK_SOURCES.map(compileTrack)
 
 export const closestPointOnSegment = (p: Vec2, a: Vec2, b: Vec2) => {
   const ab = sub(b, a)

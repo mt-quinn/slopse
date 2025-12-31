@@ -1,7 +1,7 @@
 import { clamp, dot, len, mul, normalize, sub, type Vec2 } from './math'
 import type { RunState } from './state'
 import { coinHit, closestPointOnSegment, querySegIndicesAabb, segNormalUp } from './track'
-import { JET_MAX_ENERGY } from './tuning'
+import { BOOST_ACCEL, JET_BACK_BOOST_ACCEL, JET_FWD_ACCEL, JET_MAX_ENERGY } from './tuning'
 
 const GRAVITY = 1400 // px/s^2
 const JET_ACCEL = 1650 // px/s^2 upwards when thrusting
@@ -33,6 +33,7 @@ const dtStableDrag = (v: Vec2, k: number, dt: number) => {
 }
 
 const bestMedal = (timeMs: number, bronzeMs: number, silverMs: number, goldMs: number) => {
+  if (goldMs <= 0 || silverMs <= 0 || bronzeMs <= 0) return 'none'
   if (timeMs <= goldMs) return 'gold'
   if (timeMs <= silverMs) return 'silver'
   if (timeMs <= bronzeMs) return 'bronze'
@@ -61,6 +62,10 @@ export const stepSim = (s: RunState, dtSecRaw: number) => {
     s.jet.draining = thrusting
     if (thrusting) {
       ay -= JET_ACCEL
+      // Forward assist: prevents getting stuck sliding backwards.
+      // Always add a bit of +X; add more the more negative v.x is.
+      const back01 = clamp((-disc.v.x) / 500, 0, 1)
+      ax += JET_FWD_ACCEL + JET_BACK_BOOST_ACCEL * back01
       // Drain energy in air or on ground alike; only recharge on ground (per spec).
       s.jet.energy = clamp(s.jet.energy - h * 0.55, 0, JET_MAX_ENERGY)
     }
@@ -80,7 +85,9 @@ export const stepSim = (s: RunState, dtSecRaw: number) => {
     // Collide with track segments.
     const wasGrounded = disc.grounded
     disc.grounded = false
+    disc.groundMat = 'normal'
     disc.groundN = { x: 0, y: -1 }
+    disc.groundT = { x: 1, y: 0 }
 
     // Performance: spatial hash query for segments near the disc (tracks can loop/backtrack).
     const pad = disc.r + GROUND_SNAP_DIST + 10
@@ -100,25 +107,31 @@ export const stepSim = (s: RunState, dtSecRaw: number) => {
 
       // “Generous” contact: if we’re very close, treat as contact even if slightly separated.
       if (dist <= target + GROUND_SNAP_DIST) {
-        // Determine the “ground/up” normal for this segment and only allow it to be ground
-        // if the contact is from above-ish.
         const nUp = segNormalUp(seg.a, seg.b)
         const toCenter = dist > 1e-6 ? { x: d.x / dist, y: d.y / dist } : { ...nUp }
-        const fromAbove = dot(toCenter, nUp) > 0.15
+
+        // One-way ground: only collide when approaching from above-ish.
+        // Use the segment's upward normal as the authoritative contact normal, and keep the
+        // gating test relatively lenient to avoid micro-ungrounding on curves.
+        const fromAbove = dot(toCenter, nUp) > 0.1
         if (!fromAbove) continue
 
+        // Signed distance along the ground normal (positive when above the surface).
+        const signed = dot(d, nUp)
+        if (signed <= 0) continue
+
         // If we're not actually intersecting and we're moving away from the ground,
-        // do NOT "magnet snap" back down — this enables clean lift-off with the jetpack.
+        // do NOT "magnet snap" back down — enables clean lift-off with the jetpack.
         const vnUp = dot(disc.v, nUp) // + means moving upward (away from ground)
-        const isPenetrating = dist < target - 0.25
+        const isPenetrating = signed < target - 0.25
         if (!isPenetrating && vnUp > 60) continue
 
-        // Penetration resolution (only if overlapping or within snap).
-        const pen = target - dist
-        const push = pen > 0 ? pen : Math.min(GROUND_SNAP_DIST, target + GROUND_SNAP_DIST - dist)
-        if (push > 0) {
-          disc.p.x += toCenter.x * push
-          disc.p.y += toCenter.y * push
+        // Resolve position ONLY along nUp (consistent normal).
+        // This avoids sideways micro-corrections that can produce constant jitter on slopes.
+        const delta = clamp(target - signed, -GROUND_SNAP_DIST, target)
+        if (Math.abs(delta) > 1e-6) {
+          disc.p.x += nUp.x * delta
+          disc.p.y += nUp.y * delta
         }
 
         // Velocity: instead of instantly projecting onto the slope (which can feel like a hard stop),
@@ -164,13 +177,22 @@ export const stepSim = (s: RunState, dtSecRaw: number) => {
         }
 
         // Tiny “stick” bias so we don’t hover off ramps between frames.
+        // With the snap correction above, keep this very small to avoid oscillation.
         if (isPenetrating || vn < 30) {
-          disc.p.x -= n.x * (GROUND_STICK_EPS * 0.35)
-          disc.p.y -= n.y * (GROUND_STICK_EPS * 0.35)
+          disc.p.x -= n.x * (GROUND_STICK_EPS * 0.12)
+          disc.p.y -= n.y * (GROUND_STICK_EPS * 0.12)
         }
 
         disc.grounded = true
+        disc.groundMat = seg.mat
         disc.groundN = n
+        // Best-effort tangent for surface effects like boost rails.
+        {
+          const tx = seg.b.x - seg.a.x
+          const ty = seg.b.y - seg.a.y
+          const tL = Math.hypot(tx, ty)
+          disc.groundT = tL > 1e-6 ? { x: tx / tL, y: ty / tL } : { x: 1, y: 0 }
+        }
 
         break
       }
@@ -180,9 +202,21 @@ export const stepSim = (s: RunState, dtSecRaw: number) => {
       disc.groundBlend = 0
     }
 
-    // Ground recharge for jet energy (Noita-style: only when grounded).
-    if (disc.grounded) {
+    // Ground recharge for jet energy (Noita-style: only when grounded),
+    // BUT never refill while the player is actively using the jetpack.
+    if (disc.grounded && !s.input.thrust) {
       s.jet.energy = clamp(s.jet.energy + h * 1.35, 0, JET_MAX_ENERGY)
+    }
+
+    // Surface effects (kept intentionally simple + legible).
+    // Boost rails accelerate along the current ground tangent (aligned to your motion).
+    if (disc.grounded && disc.groundMat === 'boost') {
+      const t0 = disc.groundT
+      const align = dot(disc.v, t0) >= 0 ? 1 : -1
+      const t = { x: t0.x * align, y: t0.y * align }
+      disc.v.x += t.x * BOOST_ACCEL * h
+      disc.v.y += t.y * BOOST_ACCEL * h
+      disc.v = capSpeed(disc.v)
     }
 
     // Coin pickup.

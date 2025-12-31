@@ -1,4 +1,4 @@
-import { trackBounds, type TrackDef } from './track'
+import { trackBounds, type TrackDef, type TrackMaterial } from './track'
 import type { Vec2 } from './math'
 import { JET_MAX_ENERGY } from './tuning'
 
@@ -18,6 +18,9 @@ export type GhostSample = { t: number; x: number; y: number }
 export type GhostRun = {
   version: 1
   trackId: string
+  // Hash of track geometry/materials at the time of recording.
+  // If missing, treat as incompatible with current tracks.
+  trackHash?: string
   timeMs: number
   samplesHz: number
   samples: GhostSample[]
@@ -64,7 +67,9 @@ export type RunState = {
     v: Vec2
     r: number
     grounded: boolean
+    groundMat: TrackMaterial
     groundN: Vec2
+    groundT: Vec2 // ground tangent (best effort; used for boost rails, etc.)
     groundBlend: number // 0..1, ramps up on landing to avoid “stop dead” feel
   }
 
@@ -110,8 +115,8 @@ export const createInitialRunState = (track: TrackDef): RunState => {
     dead: false,
     startPlatform: {
       active: true,
-      x0: track.start.p.x - 220,
-      x1: track.start.p.x + 320,
+      x0: track.start.p.x - (discR + 24),
+      x1: track.start.p.x + (discR + 24),
       y: platformY,
     },
     disc: {
@@ -120,7 +125,9 @@ export const createInitialRunState = (track: TrackDef): RunState => {
       v: { x: 0, y: 0 },
       r: discR,
       grounded: false,
+      groundMat: 'normal',
       groundN: { x: 0, y: -1 },
+      groundT: { x: 1, y: 0 },
       groundBlend: 0,
     },
     jet: { energy: JET_MAX_ENERGY, draining: false },

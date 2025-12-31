@@ -22,13 +22,14 @@ export const saveBestTimeMs = (trackId: string, timeMs: number) => {
   }
 }
 
-export const loadBestGhost = (trackId: string): GhostRun | null => {
+export const loadBestGhost = (trackId: string, trackHash?: string): GhostRun | null => {
   try {
     const raw = window.localStorage.getItem(keyBestGhost(trackId))
     if (!raw) return null
     const parsed = JSON.parse(raw) as GhostRun
     if (!parsed || parsed.version !== 1) return null
     if (parsed.trackId !== trackId) return null
+    if (trackHash && parsed.trackHash !== trackHash) return null
     if (!Array.isArray(parsed.samples)) return null
     return parsed
   } catch {

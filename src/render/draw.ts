@@ -2,6 +2,7 @@ import type { RunState } from '../game/state'
 import { clamp } from '../game/math'
 import { sampleGhostAt } from '../game/sim'
 import { JET_MAX_ENERGY } from '../game/tuning'
+import { trackBounds } from '../game/track'
 
 const withDpr = (ctx: CanvasRenderingContext2D, dpr: number, fn: () => void) => {
   ctx.save()
@@ -31,22 +32,32 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
 
-    // Soft back glow line
-    ctx.strokeStyle = 'rgba(140, 100, 255, 0.18)'
-    ctx.lineWidth = 16
-    ctx.beginPath()
-    for (let i = 0; i < s.track.segments.length; i++) {
-      const seg = s.track.segments[i]!
-      // Avoid visually connecting discontiguous segments (e.g. multiple paths in the editor).
-      const prev = i > 0 ? s.track.segments[i - 1]!.b : null
-      const cont =
-        prev != null &&
-        Math.abs(prev.x - seg.a.x) < 1e-6 &&
-        Math.abs(prev.y - seg.a.y) < 1e-6
-      if (!cont) ctx.moveTo(seg.a.x, seg.a.y)
-      ctx.lineTo(seg.b.x, seg.b.y)
+    const drawTrackByMat = (mat: 'normal' | 'boost', strokeStyle: string, lineWidth: number, dashed?: number[]) => {
+      ctx.save()
+      ctx.strokeStyle = strokeStyle
+      ctx.lineWidth = lineWidth
+      if (dashed) ctx.setLineDash(dashed)
+      ctx.beginPath()
+      const segs = s.track.segments
+      for (let i = 0; i < segs.length; i++) {
+        const seg = segs[i]!
+        if (seg.mat !== mat) continue
+        const prev = i > 0 ? segs[i - 1]! : null
+        const cont =
+          prev != null &&
+          prev.mat === seg.mat &&
+          Math.abs(prev.b.x - seg.a.x) < 1e-6 &&
+          Math.abs(prev.b.y - seg.a.y) < 1e-6
+        if (!cont) ctx.moveTo(seg.a.x, seg.a.y)
+        ctx.lineTo(seg.b.x, seg.b.y)
+      }
+      ctx.stroke()
+      ctx.restore()
     }
-    ctx.stroke()
+
+    // Soft back glow line (material-coded)
+    drawTrackByMat('normal', 'rgba(140, 100, 255, 0.18)', 16)
+    drawTrackByMat('boost', 'rgba(120, 180, 255, 0.22)', 18)
 
     // Start platform (pre-run)
     if (!s.runStarted && s.startPlatform.active) {
@@ -69,20 +80,9 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     }
 
     // Main rail
-    ctx.strokeStyle = 'rgba(255, 246, 213, 0.75)'
-    ctx.lineWidth = 5
-    ctx.beginPath()
-    for (let i = 0; i < s.track.segments.length; i++) {
-      const seg = s.track.segments[i]!
-      const prev = i > 0 ? s.track.segments[i - 1]!.b : null
-      const cont =
-        prev != null &&
-        Math.abs(prev.x - seg.a.x) < 1e-6 &&
-        Math.abs(prev.y - seg.a.y) < 1e-6
-      if (!cont) ctx.moveTo(seg.a.x, seg.a.y)
-      ctx.lineTo(seg.b.x, seg.b.y)
-    }
-    ctx.stroke()
+    drawTrackByMat('normal', 'rgba(255, 246, 213, 0.75)', 5)
+    // Boost rails: brighter + dashed “chevron-like” read.
+    drawTrackByMat('boost', 'rgba(120, 180, 255, 0.92)', 6, [10, 8])
 
     // Coins
     for (const c of s.track.coins) {
@@ -254,6 +254,68 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         ctx.fill()
         ctx.restore()
       }
+    }
+
+    // Minimap strip (top, full width): whole course line with player (red) and ghost (blue)
+    {
+      const padX = 14
+      const y0 = 14
+      const maxH = 110
+
+      const b = trackBounds(s.track.segments)
+      const bw = Math.max(1, b.maxX - b.minX)
+      const bh = Math.max(1, b.maxY - b.minY)
+      const availW = Math.max(1, w - padX * 2)
+      const sFit = Math.min(availW / bw, maxH / bh)
+      const usedH = bh * sFit
+
+      // Center vertically within the strip height.
+      const top = y0 + (maxH - usedH) * 0.5
+
+      const mx = (wx: number) => padX + (wx - b.minX) * sFit
+      const my = (wy: number) => top + (wy - b.minY) * sFit
+
+      ctx.save()
+      ctx.globalCompositeOperation = 'source-over'
+
+      // Track polyline (clean, no container)
+      ctx.strokeStyle = 'rgba(255, 246, 213, 0.30)'
+      ctx.lineWidth = 1.75
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      ctx.beginPath()
+      const segs = s.track.segments
+      for (let i = 0; i < segs.length; i++) {
+        const seg = segs[i]!
+        const prev = i > 0 ? segs[i - 1]! : null
+        const cont =
+          prev != null &&
+          Math.abs(prev.b.x - seg.a.x) < 1e-6 &&
+          Math.abs(prev.b.y - seg.a.y) < 1e-6
+        if (!cont) ctx.moveTo(mx(seg.a.x), my(seg.a.y))
+        ctx.lineTo(mx(seg.b.x), my(seg.b.y))
+      }
+      ctx.stroke()
+
+      // Ghost dot (blue)
+      if (s.bestGhost && s.ghostPlayback.active) {
+        const t = s.timeMs / 1000
+        const gp = sampleGhostAt(s.bestGhost.samples, t)
+        if (gp) {
+          ctx.fillStyle = 'rgba(120, 180, 255, 0.95)'
+          ctx.beginPath()
+          ctx.arc(mx(gp.x), my(gp.y), 3.2, 0, Math.PI * 2)
+          ctx.fill()
+        }
+      }
+
+      // Player dot (red)
+      ctx.fillStyle = 'rgba(255, 70, 90, 0.95)'
+      ctx.beginPath()
+      ctx.arc(mx(s.disc.p.x), my(s.disc.p.y), 3.6, 0, Math.PI * 2)
+      ctx.fill()
+
+      ctx.restore()
     }
 
     // Ghost time delta tag (screen-space, attached to ghost)

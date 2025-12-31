@@ -1,41 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './app.css'
-import { ALL_TRACKS, getTrackById } from './game/track'
+import { localDateKey, makeDailyTrack } from './game/track'
 import { createInitialRunState, type GhostRun, type RunResult, type RunState } from './game/state'
 import { loadBestGhost, loadBestTimeMs, saveBestGhost, saveBestTimeMs } from './game/persist'
 import { clamp, lerp } from './game/math'
 import { stepSim } from './game/sim'
+import { sampleGhostAt } from './game/sim'
 import { drawFrame } from './render/draw'
-import { addTopTime, loadLastPlayerName, loadTopTimes, qualifiesTop5, saveLastPlayerName } from './game/highScores'
-import { loadCompletedTrackIds, saveCompletedTrackIds } from './game/progression'
+import {
+  fetchDailyAround,
+  fetchDailyRunById,
+  fetchDailyTop5,
+  loadLastLbName,
+  loadSubmittedRunId,
+  saveLastLbName,
+  saveSubmittedRunId,
+  submitDailyRun,
+  type RankedRun,
+} from './game/leaderboard'
 import { applyCameraDeath, updateRunCamera } from './game/camera'
 import { startRun } from './game/runControl'
-
-const DevEditorGate = () => {
-  const [Editor, setEditor] = useState<null | React.ComponentType>(null)
-  useEffect(() => {
-    let alive = true
-    import('./editor/TrackEditor').then((m) => {
-      if (!alive) return
-      setEditor(() => m.default as any)
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
-  if (!Editor) {
-    return (
-      <div className="sl-viewport">
-        <div className="sl-shell" style={{ padding: '1rem' }}>
-          <div className="panel">
-            <div className="panelTitle">Loading editor…</div>
-          </div>
-        </div>
-      </div>
-    )
-  }
-  return <Editor />
-}
 
 const fmtMs = (ms: number) => {
   const t = Math.max(0, Math.round(ms))
@@ -58,60 +42,67 @@ const medalLabel = (r: RunResult | null) => {
 }
 
 export default function App() {
-  const isEditor = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('editor')
-  // Editor is a local-only dev tool.
-  if (isEditor) {
-    if (!import.meta.env.DEV) {
-      // On production (e.g. Vercel), ignore the editor flag and run the game.
-    } else if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
-      // Avoid exposing editor on non-local hosts even in dev server mode.
-      return (
-        <div className="sl-viewport">
-          <div className="sl-shell" style={{ padding: '1rem' }}>
-            <div className="panel">
-              <div className="panelTitle">Editor disabled</div>
-              <div className="panelBody">The track editor is only available on localhost.</div>
-            </div>
-          </div>
-        </div>
-      )
-    } else {
-      return <DevEditorGate />
-    }
-  }
-
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const rafRef = useRef<number | null>(null)
   const hudBucketRef = useRef<number>(-1)
 
-  const firstTrackId = useMemo(() => ALL_TRACKS[0]!.id, [])
-  const [currentTrackId, setCurrentTrackId] = useState<string>(firstTrackId)
-  const [showTrackSelect, setShowTrackSelect] = useState(false)
+  const dateKey = useMemo(() => localDateKey(), [])
+  const track = useMemo(() => makeDailyTrack(dateKey), [dateKey])
   const [paused, setPaused] = useState(false)
-
-  const completedIds = useMemo(() => (typeof window !== 'undefined' ? loadCompletedTrackIds() : new Set<string>()), [])
-  const [completedToken, setCompletedToken] = useState(0)
-
-  const getUnlockedSet = useCallback(() => {
-    // Unlock rule: track 0 is always unlocked; any completed track is unlocked;
-    // and completing a track unlocks the next one in ALL_TRACKS order.
-    const done = typeof window !== 'undefined' ? loadCompletedTrackIds() : new Set<string>()
-    const unlocked = new Set<string>()
-    if (ALL_TRACKS.length > 0) unlocked.add(ALL_TRACKS[0]!.id)
-    for (const id of done) unlocked.add(id)
-    for (let i = 0; i < ALL_TRACKS.length - 1; i++) {
-      const a = ALL_TRACKS[i]!
-      const b = ALL_TRACKS[i + 1]!
-      if (done.has(a.id)) unlocked.add(b.id)
-    }
-    return { done, unlocked }
-  }, [])
-
-  const track = useMemo(() => getTrackById(currentTrackId) ?? ALL_TRACKS[0]!, [currentTrackId])
 
   const stateRef = useRef<RunState | null>(null)
 
-  const [hud, setHud] = useState(() => ({
+  const [lbTop5, setLbTop5] = useState<RankedRun[] | null>(null)
+  const [lbAround, setLbAround] = useState<RankedRun[] | null>(null)
+  const [lbErr, setLbErr] = useState<string | null>(null)
+  const [lbLoading, setLbLoading] = useState(false)
+  const [lbName, setLbName] = useState(() => (typeof window !== 'undefined' ? loadLastLbName() : ''))
+  const [lbSubmittedId, setLbSubmittedId] = useState<string | null>(() =>
+    typeof window !== 'undefined' ? loadSubmittedRunId(dateKey) : null,
+  )
+  const [lbSubmitting, setLbSubmitting] = useState(false)
+  const [lbSubmitErr, setLbSubmitErr] = useState<string | null>(null)
+
+  // Prevent re-submitting the same finished run repeatedly.
+  const runTokenRef = useRef<string>('init')
+  const [submittedRunToken, setSubmittedRunToken] = useState<string | null>(null)
+  const newRunToken = useCallback(() => {
+    try {
+      const a = new Uint32Array(3)
+      crypto.getRandomValues(a)
+      return `${a[0]!.toString(16)}${a[1]!.toString(16)}${a[2]!.toString(16)}`
+    } catch {
+      return `${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`
+    }
+  }, [])
+
+  const lsKeyGhostPick = useMemo(() => `slopes-lb-ghost-pick-${dateKey}`, [dateKey])
+  const [ghostPickId, setGhostPickId] = useState<string | null>(() => {
+    try {
+      return typeof window !== 'undefined' ? window.localStorage.getItem(`slopes-lb-ghost-pick-${dateKey}`) : null
+    } catch {
+      return null
+    }
+  })
+  const [ghostPick, setGhostPick] = useState<{ id: string; replay: GhostRun } | null>(null)
+  const tempGhostRef = useRef<GhostRun | null>(null)
+  const [replayRun, setReplayRun] = useState<RankedRun | null>(null)
+  const [replayEnded, setReplayEnded] = useState(false)
+  const replayRef = useRef<{ samples: GhostRun['samples']; durationSec: number; t: number } | null>(null)
+
+  type HudState = {
+    timeMs: number
+    energy: number
+    speedMph: number
+    coins: number
+    coinsTotal: number
+    bestTimeMs: number | null
+    dead: boolean
+    finished: boolean
+    medal: string | null
+  }
+
+  const [hud, setHud] = useState<HudState>(() => ({
     timeMs: 0,
     energy: 1,
     speedMph: 0,
@@ -122,44 +113,173 @@ export default function App() {
     finished: false,
     medal: null as string | null,
   }))
-
-  const [topTimes, setTopTimes] = useState(() =>
-    typeof window !== 'undefined' ? loadTopTimes(track.id) : [],
-  )
-  const [nameDraft, setNameDraft] = useState(() =>
-    typeof window !== 'undefined' ? loadLastPlayerName() : '',
-  )
-  const [showNamePrompt, setShowNamePrompt] = useState(false)
-  const [pendingScoreMs, setPendingScoreMs] = useState<number | null>(null)
   const handledFinishRef = useRef(false)
 
-  const initRunForTrack = useCallback(
-    (trackId: string) => {
-      const t = getTrackById(trackId)
-      if (!t) return
-      const s = createInitialRunState(t)
-      s.bestTimeMs = typeof window !== 'undefined' ? loadBestTimeMs(t.id) : null
-      s.bestGhost = typeof window !== 'undefined' ? loadBestGhost(t.id) : null
-      s.ghostPlayback.active = s.bestGhost != null
+  // When entering replay mode from the finished overlay, keep a copy so Exit restores it.
+  const preReplayRef = useRef<{ state: RunState | null; hud: HudState; paused: boolean } | null>(null)
+
+  const isGhostCompatible = useCallback(
+    (g: GhostRun | null) => {
+      if (!g) return false
+      if (g.trackId !== track.id) return false
+      if (!g.trackHash) return false
+      return g.trackHash === track.trackHash
+    },
+    [track.id, track.trackHash],
+  )
+
+  const resolvePickedGhost = useCallback(
+    async (id: string) => {
+      // First try any currently loaded leaderboard rows.
+      const fromLists = [...(lbTop5 ?? []), ...(lbAround ?? [])].find((r) => r.id === id)
+      if (fromLists) return { id, replay: fromLists.replay }
+
+      // Otherwise fetch directly.
+      const row = await fetchDailyRunById(id)
+      if (row?.replay) return { id, replay: row.replay }
+      return null
+    },
+    [lbAround, lbTop5],
+  )
+
+  // Persist + resolve the selected ghost id.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      if (!ghostPickId) window.localStorage.removeItem(lsKeyGhostPick)
+      else window.localStorage.setItem(lsKeyGhostPick, ghostPickId)
+    } catch {
+      // best-effort
+    }
+  }, [ghostPickId, lsKeyGhostPick])
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      if (!ghostPickId) {
+        setGhostPick(null)
+        return
+      }
+      try {
+        const g = await resolvePickedGhost(ghostPickId)
+        if (!alive) return
+        if (g && isGhostCompatible(g.replay)) setGhostPick(g)
+        else setGhostPick(null)
+      } catch {
+        if (!alive) return
+        setGhostPick(null)
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [ghostPickId, isGhostCompatible, resolvePickedGhost])
+
+  const consumeTempGhost = () => {
+    const g = tempGhostRef.current
+    tempGhostRef.current = null
+    return g
+  }
+
+  const defaultGhost = useCallback(() => {
+    if (ghostPick?.replay && isGhostCompatible(ghostPick.replay)) return ghostPick.replay
+    const local = typeof window !== 'undefined' ? loadBestGhost(track.id, track.trackHash) : null
+    return isGhostCompatible(local) ? local : null
+  }, [ghostPick?.replay, isGhostCompatible, track.id, track.trackHash])
+
+  const startReplay = useCallback(
+    (r: RankedRun) => {
+      if (!isGhostCompatible(r.replay)) {
+        setLbErr('Replay is for a different track version/geometry.')
+        return
+      }
+      // Snapshot current state so Exit replay returns to where the replay was invoked.
+      preReplayRef.current = { state: stateRef.current, hud, paused }
+
+      // Start a dedicated replay mode that animates the "player" along the run samples.
+      setReplayRun(r)
+      setReplayEnded(false)
+      replayRef.current = {
+        samples: r.replay.samples,
+        durationSec: Math.max(0.001, r.replay.timeMs / 1000),
+        t: 0,
+      }
+
+      const prev = stateRef.current
+      const s = createInitialRunState(track)
+      // CRITICAL: preserve current viewport sizing so we draw/clear the whole canvas.
+      if (prev) s.view = { ...prev.view }
+      s.runStarted = true
+      s.startPlatform.active = false
+      s.input.thrust = false
+      s.input.thrustPointerId = null
+      s.recording.active = false
+      s.bestGhost = null
+      s.ghostPlayback.active = false
+      s.timeMs = 0
+
+      const p0 = r.replay.samples[0]
+      if (p0) {
+        s.disc.p.x = p0.x
+        s.disc.p.y = p0.y
+      }
+      s.disc.v = { x: 0, y: 0 }
+
       stateRef.current = s
       setHud({
         timeMs: 0,
         energy: 1,
         speedMph: 0,
         coins: 0,
-        coinsTotal: t.coins.length,
+        coinsTotal: 0,
         bestTimeMs: s.bestTimeMs,
         dead: false,
         finished: false,
         medal: null,
       })
-      setShowNamePrompt(false)
-      setPendingScoreMs(null)
       handledFinishRef.current = false
       setPaused(false)
     },
-    [],
+    [hud, isGhostCompatible, paused, track],
   )
+
+  const initRun = useCallback(() => {
+    runTokenRef.current = newRunToken()
+    setSubmittedRunToken(null)
+    const prev = stateRef.current
+    const s = createInitialRunState(track)
+    // Preserve current viewport sizing to avoid partial-canvas renders after any reset.
+    if (prev) s.view = { ...prev.view }
+    s.bestTimeMs = typeof window !== 'undefined' ? loadBestTimeMs(track.id) : null
+    const temp = consumeTempGhost()
+    s.bestGhost = temp ?? defaultGhost()
+    s.ghostPlayback.active = s.bestGhost != null
+    stateRef.current = s
+    setHud({
+      timeMs: 0,
+      energy: 1,
+      speedMph: 0,
+      coins: 0,
+      coinsTotal: track.coins.length,
+      bestTimeMs: s.bestTimeMs,
+      dead: false,
+      finished: false,
+      medal: null,
+    })
+    handledFinishRef.current = false
+    setPaused(false)
+  }, [defaultGhost, newRunToken, track])
+
+  const exitReplay = useCallback(() => {
+    setReplayRun(null)
+    setReplayEnded(false)
+    replayRef.current = null
+    const snap = preReplayRef.current
+    preReplayRef.current = null
+    if (snap?.state) stateRef.current = snap.state
+    setHud(snap?.hud ?? hud)
+    setPaused(snap?.paused ?? false)
+  }, [hud])
 
   const startRunIfNeeded = useCallback(() => {
     const s = stateRef.current
@@ -183,18 +303,30 @@ export default function App() {
 
   // Initialize and re-initialize when track changes. Doing this in an effect avoids
   // calling setState during render (which can crash in StrictMode/dev).
+  const initRunRef = useRef<null | (() => void)>(null)
   useEffect(() => {
-    initRunForTrack(currentTrackId)
-    if (typeof window !== 'undefined') setTopTimes(loadTopTimes(currentTrackId))
-  }, [currentTrackId, initRunForTrack])
+    initRunRef.current = initRun
+  }, [initRun])
+  useEffect(() => {
+    initRunRef.current?.()
+  }, [track.id, track.trackHash])
 
   const restart = useCallback(() => {
     const prev = stateRef.current
     if (!prev) return
-    const next = createInitialRunState(getTrackById(prev.track.id) ?? track)
+    // If we're watching a replay, "Restart" should restart the replay instead of starting a new run.
+    if (replayRun && replayRef.current) {
+      startReplay(replayRun)
+      return
+    }
+    runTokenRef.current = newRunToken()
+    setSubmittedRunToken(null)
+    const next = createInitialRunState(track)
     next.view = prev.view
     next.bestTimeMs = prev.bestTimeMs
-    next.bestGhost = prev.bestGhost
+    // Re-apply ghost selection on each restart (temp view replay applies for only one run).
+    const temp = consumeTempGhost()
+    next.bestGhost = temp ?? defaultGhost()
     next.ghostPlayback.active = next.bestGhost != null
     Object.assign(prev, next)
     setHud((h) => ({
@@ -208,43 +340,27 @@ export default function App() {
       finished: false,
       medal: null,
     }))
-    setShowNamePrompt(false)
-    setPendingScoreMs(null)
     handledFinishRef.current = false
     setPaused(false)
-  }, [track])
-
-  const nextTrack = useCallback(() => {
-    const idx = ALL_TRACKS.findIndex((t) => t.id === currentTrackId)
-    if (idx < 0) return
-    const next = ALL_TRACKS[(idx + 1) % ALL_TRACKS.length]!
-    // Allow going to next if unlocked, otherwise stay.
-    const { unlocked } = getUnlockedSet()
-    if (!unlocked.has(next.id)) return
-    setCurrentTrackId(next.id)
-    setPaused(false)
-  }, [currentTrackId, getUnlockedSet, initRunForTrack])
-
-  const selectTrack = useCallback(
-    (id: string) => {
-      const { unlocked } = getUnlockedSet()
-      if (!unlocked.has(id)) return
-      setCurrentTrackId(id)
-      setShowTrackSelect(false)
-      setPaused(false)
-    },
-    [getUnlockedSet, initRunForTrack],
-  )
+  }, [defaultGhost, newRunToken, replayRun, startReplay, track])
 
   // Pointer input: press anywhere to thrust; release to stop.
   useEffect(() => {
     const onDown = (e: PointerEvent) => {
-      e.preventDefault()
+      // Allow normal UI interactions (name entry, buttons, etc).
+      const t = e.target as any
+      const el: HTMLElement | null = t && typeof t === 'object' && 'closest' in t ? (t as HTMLElement) : null
+      if (el && el.closest('input,textarea,select,button,a,[role="button"],[contenteditable="true"]')) return
+
       const s = stateRef.current
       if (!s) return
+      if (replayRef.current) return
       if (paused) return
       if (s.dead || s.finished) return
       if (s.input.thrustPointerId != null) return
+
+      // Only prevent defaults (text selection, scroll gestures) when we actually take over the pointer for thrust.
+      e.preventDefault()
       startRunIfNeeded()
       s.input.thrustPointerId = e.pointerId
       s.input.thrust = true
@@ -273,6 +389,7 @@ export default function App() {
       if (e.key !== ' ' && e.code !== 'Space') return
       const s = stateRef.current
       if (!s) return
+      if (replayRef.current) return
       if (paused) return
       if (s.dead || s.finished) return
       if (isDown) startRunIfNeeded()
@@ -350,9 +467,38 @@ export default function App() {
       last = now
 
       if (!paused) {
-        stepSim(s, dtSec)
-        updateRunCamera(s)
-        applyCameraDeath(s)
+        const r = replayRef.current
+        if (r) {
+          // Replay playback: advance time and place the player at the recorded positions.
+          if (!replayEnded) {
+            r.t = Math.min(r.durationSec, r.t + dtSec)
+            if (r.t + 1e-6 >= r.durationSec) setReplayEnded(true)
+          }
+          const tNow = r.t
+          s.timeMs = tNow * 1000
+          s.input.thrust = false
+          s.input.thrustPointerId = null
+          const p = sampleGhostAt(r.samples as any, tNow)
+          if (p) {
+            // Approximate velocity for HUD/camera smoothing.
+            const p2 = sampleGhostAt(r.samples as any, Math.min(r.durationSec, tNow + 1 / 60))
+            if (p2) {
+              s.disc.v.x = (p2.x - p.x) * 60
+              s.disc.v.y = (p2.y - p.y) * 60
+            } else {
+              s.disc.v.x = 0
+              s.disc.v.y = 0
+            }
+            s.disc.p.x = p.x
+            s.disc.p.y = p.y
+          }
+          updateRunCamera(s)
+          // No camera-death during replay.
+        } else {
+          stepSim(s, dtSec)
+          updateRunCamera(s)
+          applyCameraDeath(s)
+        }
       }
 
       // If we finished and it’s a new best, persist best time + ghost (positions).
@@ -378,12 +524,13 @@ export default function App() {
           const ghost: GhostRun = {
             version: 1,
             trackId: s.track.id,
+          trackHash: s.track.trackHash,
             timeMs,
             samplesHz: s.recording.samplesHz,
             samples,
           }
           s.bestGhost = ghost
-          s.ghostPlayback.active = true
+        s.ghostPlayback.active = isGhostCompatible(ghost)
           saveBestGhost(s.track.id, ghost)
         }
       }
@@ -391,21 +538,6 @@ export default function App() {
       // Completion + high score prompt.
       if (s.finished && s.finishHandled && !handledFinishRef.current && s.result) {
         handledFinishRef.current = true
-        const timeMs = s.result.timeMs
-        setPendingScoreMs(timeMs)
-
-        // Mark track complete + unlock next.
-        if (typeof window !== 'undefined') {
-          const done = loadCompletedTrackIds()
-          done.add(s.track.id)
-          saveCompletedTrackIds(done)
-          setCompletedToken((x) => x + 1)
-        }
-
-        // Prompt for top-5 name entry.
-        if (typeof window !== 'undefined' && qualifiesTop5(s.track.id, timeMs)) {
-          setShowNamePrompt(true)
-        }
       }
 
       drawFrame(canvas, s)
@@ -414,7 +546,7 @@ export default function App() {
       const bucket = Math.floor(now / 100)
       if (bucket !== hudBucketRef.current) {
         hudBucketRef.current = bucket
-        const r = s.result
+        const rr = s.result
         const speedPxPerSec = Math.hypot(s.disc.v.x, s.disc.v.y)
         const speedMph = Math.round(speedPxPerSec / 10)
         setHud({
@@ -426,7 +558,7 @@ export default function App() {
           bestTimeMs: s.bestTimeMs,
           dead: s.dead,
           finished: s.finished,
-          medal: medalLabel(r),
+          medal: medalLabel(rr),
         })
       }
 
@@ -439,16 +571,70 @@ export default function App() {
       window.visualViewport?.removeEventListener('resize', resize)
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
     }
-  }, [paused, track])
+  }, [paused, replayEnded, track])
 
-  // Keep top times in sync when track changes.
+  const showOverlay = hud.dead || hud.finished
+  const showPause = paused && !showOverlay
+
+  const refreshLeaderboard = useCallback(async () => {
+    setLbErr(null)
+    setLbLoading(true)
+    try {
+      const top5 = await fetchDailyTop5(dateKey)
+      setLbTop5(top5)
+      if (lbSubmittedId) {
+        const around = await fetchDailyAround(dateKey, lbSubmittedId)
+        setLbAround(around)
+      } else {
+        setLbAround(null)
+      }
+    } catch (e: any) {
+      setLbErr(String(e?.message ?? e))
+    } finally {
+      setLbLoading(false)
+    }
+  }, [dateKey, lbSubmittedId])
+
   useEffect(() => {
     if (typeof window === 'undefined') return
-    setTopTimes(loadTopTimes(track.id))
-  }, [track.id, completedToken])
+    refreshLeaderboard()
+  }, [refreshLeaderboard])
 
-  const showOverlay = (hud.dead || hud.finished) && !showTrackSelect
-  const showPause = paused && !showTrackSelect && !showOverlay
+  const submitToLeaderboard = useCallback(async () => {
+    const s = stateRef.current
+    if (!s?.result?.finished) return
+    if (submittedRunToken === runTokenRef.current) return
+    setLbSubmitErr(null)
+    setLbSubmitting(true)
+    try {
+      const timeMs = s.result.timeMs
+      const tSec = timeMs / 1000
+      const samples = s.recording.samples.slice()
+      if (samples.length === 0 || Math.abs(samples[samples.length - 1]!.t - tSec) > 1 / s.recording.samplesHz) {
+        samples.push({ t: tSec, x: s.disc.p.x, y: s.disc.p.y })
+      }
+      const replay: GhostRun = {
+        version: 1,
+        trackId: s.track.id,
+        trackHash: s.track.trackHash,
+        timeMs,
+        samplesHz: s.recording.samplesHz,
+        samples,
+      }
+      const name = (lbName || 'Player').trim().slice(0, 16) || 'Player'
+      const out = await submitDailyRun({ dateKey, name, timeMs, replay })
+      setLbSubmittedId(out.id)
+      saveSubmittedRunId(dateKey, out.id)
+      saveLastLbName(out.name)
+      setLbName(out.name)
+      setSubmittedRunToken(runTokenRef.current)
+      await refreshLeaderboard()
+    } catch (e: any) {
+      setLbSubmitErr(String(e?.message ?? e))
+    } finally {
+      setLbSubmitting(false)
+    }
+  }, [dateKey, lbName, refreshLeaderboard, submittedRunToken])
 
   return (
     <div className="sl-viewport">
@@ -461,6 +647,11 @@ export default function App() {
               <div className="hudTimeCard" aria-label="Timer">
                 <div className="hudMajorLabel">TIME</div>
                 <div className="hudMajorValue">{fmtMs(hud.timeMs)}</div>
+                {hud.bestTimeMs != null && (
+                  <div className="hudMinorValue" aria-label="Best time">
+                    Best {fmtMs(hud.bestTimeMs)}
+                  </div>
+                )}
               </div>
 
               <div className="hudSpeedCard" aria-label="Speed">
@@ -469,29 +660,6 @@ export default function App() {
                   <span className="hudSpeedNum">{hud.speedMph}</span>
                   <span className="hudSpeedUnit">mph</span>
                 </div>
-              </div>
-
-              <div className="hudMetaCard" aria-label="Meta">
-                <div className="hudMetaRow">
-                  <span className="hudMetaKey">Track</span>
-                  <span className="hudMetaVal" title={track.name}>
-                    {track.name}
-                  </span>
-                </div>
-                {hud.bestTimeMs != null && (
-                  <div className="hudMetaRow">
-                    <span className="hudMetaKey">Best</span>
-                    <span className="hudMetaVal">{fmtMs(hud.bestTimeMs)}</span>
-                  </div>
-                )}
-                {hud.coinsTotal > 0 && (
-                  <div className="hudMetaRow">
-                    <span className="hudMetaKey">Coins</span>
-                    <span className="hudMetaVal">
-                      {hud.coins}/{hud.coinsTotal}
-                    </span>
-                  </div>
-                )}
               </div>
 
               <div className="hudControls" aria-label="Controls">
@@ -506,6 +674,37 @@ export default function App() {
               </div>
             </div>
 
+            {replayRun && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 10,
+                  right: 10,
+                  zIndex: 5,
+                  display: 'flex',
+                  gap: '0.5rem',
+                  alignItems: 'center',
+                  padding: '0.45rem 0.6rem',
+                  borderRadius: 999,
+                  background: 'rgba(10, 8, 22, 0.55)',
+                  border: '1px solid rgba(255,255,255,0.10)',
+                  color: '#fff6d5',
+                  fontWeight: 800,
+                }}
+              >
+                <span style={{ opacity: 0.9 }}>REPLAY</span>
+                {replayEnded && <span style={{ opacity: 0.7, fontWeight: 700 }}>ended</span>}
+                {replayEnded && (
+                  <button type="button" className="hudBtn" onClick={() => startReplay(replayRun)}>
+                    Replay again
+                  </button>
+                )}
+                <button type="button" className="hudBtn" onClick={exitReplay}>
+                  Exit
+                </button>
+              </div>
+            )}
+
             {showOverlay && (
               <div className="overlay" role="dialog" aria-label={hud.finished ? 'Finished' : 'Crashed'}>
                 <div className="panel">
@@ -514,71 +713,147 @@ export default function App() {
                     <div>
                       <strong>Time:</strong> {fmtMs(hud.timeMs)}
                     </div>
-                    <div>
-                      <strong>Coins:</strong> {hud.coins}/{hud.coinsTotal}
-                    </div>
                     {hud.medal && (
                       <div style={{ marginTop: '0.35rem' }}>
                         <strong>Result:</strong> {hud.medal}
                       </div>
                     )}
-                    {topTimes.length > 0 && (
-                      <div style={{ marginTop: '0.8rem' }}>
-                        <strong>Top Times</strong>
-                        <ol style={{ margin: '0.35rem 0 0', padding: 0, listStyle: 'none', display: 'grid', gap: '0.25rem' }}>
-                          {topTimes.map((e, i) => (
-                            <li
-                              key={`${e.ts}-${i}`}
-                              style={{ display: 'grid', gridTemplateColumns: '1.5rem 1fr auto', gap: '0.55rem', alignItems: 'baseline' }}
+
+                    {hud.finished && (
+                      <div style={{ marginTop: '0.85rem' }}>
+                        <strong>Daily Leaderboard</strong>
+                        <div style={{ marginTop: '0.45rem', display: 'grid', gap: '0.4rem' }}>
+                          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                            <input
+                              value={lbName}
+                              onChange={(e) => setLbName(e.target.value)}
+                              onBlur={() => saveLastLbName((lbName || '').trim().slice(0, 16))}
+                              maxLength={16}
+                              placeholder="PLAYER"
+                              disabled={lbSubmitting}
+                              style={{
+                                flex: 1,
+                                borderRadius: 999,
+                                border: '1px solid rgba(255,245,200,0.22)',
+                                background: 'rgba(12,10,28,0.55)',
+                                color: '#fff6d5',
+                                padding: '0.48rem 0.8rem',
+                                outline: 'none',
+                                fontSize: 16,
+                              }}
+                            />
+                            <button
+                              type="button"
+                              className="btn"
+                              disabled={!hud.finished || lbSubmitting || submittedRunToken === runTokenRef.current}
+                              onClick={submitToLeaderboard}
                             >
-                              <span style={{ opacity: 0.75 }}>{i + 1}</span>
-                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
-                              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtMs(e.timeMs)}</span>
-                            </li>
-                          ))}
-                        </ol>
-                      </div>
-                    )}
-                    {showNamePrompt && pendingScoreMs != null && (
-                      <div style={{ marginTop: '0.8rem' }}>
-                        <strong>New Top 5 — enter your name</strong>
-                        <div style={{ marginTop: '0.45rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                          <input
-                            value={nameDraft}
-                            onChange={(e) => setNameDraft(e.target.value)}
-                            maxLength={16}
-                            placeholder="PLAYER"
-                            style={{
-                              flex: 1,
-                              borderRadius: 999,
-                              border: '1px solid rgba(255,245,200,0.22)',
-                              background: 'rgba(12,10,28,0.55)',
-                              color: '#fff6d5',
-                              padding: '0.48rem 0.8rem',
-                              outline: 'none',
-                              fontSize: 16,
-                            }}
-                          />
-                          <button
-                            type="button"
-                            className="btn"
-                            onClick={() => {
-                              const name = (nameDraft || 'Player').trim().slice(0, 16) || 'Player'
-                              const timeMs = pendingScoreMs
-                              const next = addTopTime(track.id, { name, timeMs })
-                              setTopTimes(next)
-                              saveLastPlayerName(name)
-                              setShowNamePrompt(false)
-                            }}
-                          >
-                            Save
-                          </button>
+                              {submittedRunToken === runTokenRef.current ? 'Submitted' : lbSubmitting ? 'Submitting…' : 'Submit'}
+                            </button>
+                          </div>
+                          {lbSubmitErr && <div style={{ color: 'rgba(255,120,120,0.95)' }}>{lbSubmitErr}</div>}
+
+                          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <button type="button" className="hudBtn" onClick={refreshLeaderboard} disabled={lbLoading}>
+                              {lbLoading ? 'Refreshing…' : 'Refresh'}
+                            </button>
+                            {lbErr && <span style={{ color: 'rgba(255,120,120,0.95)' }}>{lbErr}</span>}
+                          </div>
+
+                          {lbTop5 && lbTop5.length > 0 && (
+                            <div style={{ marginTop: '0.25rem' }}>
+                              <div style={{ opacity: 0.85, fontWeight: 800 }}>Top 5</div>
+                              <ol style={{ margin: '0.35rem 0 0', padding: 0, listStyle: 'none', display: 'grid', gap: '0.25rem' }}>
+                                {lbTop5.map((e) => (
+                                  <li
+                                    key={e.id}
+                                    style={{
+                                      display: 'grid',
+                                      gridTemplateColumns: '2.2rem 1fr auto auto auto',
+                                      gap: '0.55rem',
+                                      alignItems: 'baseline',
+                                      opacity: ghostPickId === e.id ? 1 : 0.92,
+                                    }}
+                                  >
+                                    <span style={{ opacity: 0.75 }}>#{e.rank}</span>
+                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
+                                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtMs(e.time_ms)}</span>
+                                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer' }} title="Use as ghost">
+                                      <input
+                                        type="checkbox"
+                                        checked={ghostPickId === e.id}
+                                        onChange={() => setGhostPickId((cur) => (cur === e.id ? null : e.id))}
+                                      />
+                                      <span style={{ opacity: 0.85, fontSize: '0.9rem' }}>ghost</span>
+                                    </label>
+                                    <button
+                                      type="button"
+                                      className="hudBtn"
+                                      title="View Replay"
+                                      onClick={() => {
+                                        startReplay(e)
+                                      }}
+                                      style={{ paddingInline: '0.55rem' }}
+                                    >
+                                      👁
+                                    </button>
+                                  </li>
+                                ))}
+                              </ol>
+                            </div>
+                          )}
+
+                          {lbSubmittedId && lbAround && lbAround.length > 0 && (
+                            <div style={{ marginTop: '0.55rem' }}>
+                              <div style={{ opacity: 0.85, fontWeight: 800 }}>You</div>
+                              <ol style={{ margin: '0.35rem 0 0', padding: 0, listStyle: 'none', display: 'grid', gap: '0.25rem' }}>
+                                {lbAround.map((e) => {
+                                  const isMe = e.id === lbSubmittedId
+                                  return (
+                                    <li
+                                      key={e.id}
+                                      style={{
+                                        display: 'grid',
+                                        gridTemplateColumns: '2.2rem 1fr auto auto auto',
+                                        gap: '0.55rem',
+                                        alignItems: 'baseline',
+                                        opacity: isMe || ghostPickId === e.id ? 1 : 0.82,
+                                      }}
+                                    >
+                                      <span style={{ opacity: 0.75 }}>#{e.rank}</span>
+                                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {e.name}
+                                        {isMe ? ' (you)' : ''}
+                                      </span>
+                                      <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtMs(e.time_ms)}</span>
+                                      <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer' }} title="Use as ghost">
+                                        <input
+                                          type="checkbox"
+                                          checked={ghostPickId === e.id}
+                                          onChange={() => setGhostPickId((cur) => (cur === e.id ? null : e.id))}
+                                        />
+                                        <span style={{ opacity: 0.85, fontSize: '0.9rem' }}>ghost</span>
+                                      </label>
+                                      <button
+                                        type="button"
+                                        className="hudBtn"
+                                        title="View Replay"
+                                        onClick={() => {
+                                          startReplay(e)
+                                        }}
+                                        style={{ paddingInline: '0.55rem' }}
+                                      >
+                                        👁
+                                      </button>
+                                    </li>
+                                  )
+                                })}
+                              </ol>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
-                    <div style={{ marginTop: '0.6rem', opacity: 0.85, fontSize: '0.92rem' }}>
-                      Gold medal is the time target. The top rating is <strong>Gold + all coins</strong> in one run.
-                    </div>
                   </div>
                   <div className="panelActions">
                     <button
@@ -587,12 +862,6 @@ export default function App() {
                       onClick={restart}
                     >
                       Restart
-                    </button>
-                    <button type="button" className="btn" onClick={nextTrack}>
-                      Next
-                    </button>
-                    <button type="button" className="btn ghost" onClick={() => setShowTrackSelect(true)}>
-                      Tracks
                     </button>
                   </div>
                 </div>
@@ -607,23 +876,38 @@ export default function App() {
                     <div>
                       <strong>Time:</strong> {fmtMs(hud.timeMs)}
                     </div>
-                    {hud.coinsTotal > 0 && (
-                      <div>
-                        <strong>Coins:</strong> {hud.coins}/{hud.coinsTotal}
+                    {lbTop5 && lbTop5.length > 0 && (
+                      <div style={{ marginTop: '0.85rem' }}>
+                        <strong>High Scores</strong>
+                        <ol style={{ margin: '0.35rem 0 0', padding: 0, listStyle: 'none', display: 'grid', gap: '0.25rem' }}>
+                          {lbTop5.map((e) => (
+                            <li
+                              key={e.id}
+                              style={{ display: 'grid', gridTemplateColumns: '2.2rem 1fr auto', gap: '0.55rem', alignItems: 'baseline' }}
+                            >
+                              <span style={{ opacity: 0.75 }}>#{e.rank}</span>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
+                              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtMs(e.time_ms)}</span>
+                            </li>
+                          ))}
+                        </ol>
                       </div>
                     )}
-                    {topTimes.length > 0 && (
-                      <div style={{ marginTop: '0.8rem' }}>
-                        <strong>Top Times</strong>
+                    {lbSubmittedId && lbAround && lbAround.length > 0 && (
+                      <div style={{ marginTop: '0.75rem' }}>
+                        <strong>You</strong>
                         <ol style={{ margin: '0.35rem 0 0', padding: 0, listStyle: 'none', display: 'grid', gap: '0.25rem' }}>
-                          {topTimes.map((e, i) => (
+                          {lbAround.map((e) => (
                             <li
-                              key={`${e.ts}-${i}`}
-                              style={{ display: 'grid', gridTemplateColumns: '1.5rem 1fr auto', gap: '0.55rem', alignItems: 'baseline' }}
+                              key={e.id}
+                              style={{ display: 'grid', gridTemplateColumns: '2.2rem 1fr auto', gap: '0.55rem', alignItems: 'baseline' }}
                             >
-                              <span style={{ opacity: 0.75 }}>{i + 1}</span>
-                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
-                              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtMs(e.timeMs)}</span>
+                              <span style={{ opacity: 0.75 }}>#{e.rank}</span>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {e.name}
+                                {e.id === lbSubmittedId ? ' (you)' : ''}
+                              </span>
+                              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtMs(e.time_ms)}</span>
                             </li>
                           ))}
                         </ol>
@@ -636,59 +920,6 @@ export default function App() {
                     </button>
                     <button type="button" className="btn" onClick={restart}>
                       Restart
-                    </button>
-                    <button type="button" className="btn" onClick={nextTrack}>
-                      Next
-                    </button>
-                    <button type="button" className="btn ghost" onClick={() => setShowTrackSelect(true)}>
-                      Tracks
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {showTrackSelect && (
-              <div className="overlay" role="dialog" aria-label="Track select">
-                <div className="panel">
-                  <div className="panelTitle">Tracks</div>
-                  <div className="panelBody">
-                    {(() => {
-                      const { done, unlocked } = getUnlockedSet()
-                      return (
-                        <div style={{ display: 'grid', gap: '0.4rem', marginTop: '0.4rem' }}>
-                          {ALL_TRACKS.map((t, idx) => {
-                            const isUnlocked = unlocked.has(t.id)
-                            const isDone = done.has(t.id)
-                            const best = loadBestTimeMs(t.id)
-                            return (
-                              <button
-                                key={t.id}
-                                type="button"
-                                className="hudBtn"
-                                style={{
-                                  width: '100%',
-                                  textAlign: 'left',
-                                  opacity: isUnlocked ? 1 : 0.45,
-                                  cursor: isUnlocked ? 'pointer' : 'not-allowed',
-                                }}
-                                disabled={!isUnlocked}
-                                onClick={() => selectTrack(t.id)}
-                              >
-                                {idx + 1}. {t.name}
-                                {isDone ? ' ✓' : ''}
-                                {best != null ? ` — Best ${fmtMs(best)}` : ''}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      )
-                    })()}
-
-                  </div>
-                  <div className="panelActions">
-                    <button type="button" className="btn ghost" onClick={() => setShowTrackSelect(false)}>
-                      Close
                     </button>
                   </div>
                 </div>
