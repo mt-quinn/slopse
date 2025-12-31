@@ -1,4 +1,4 @@
--- Slopes Daily Leaderboard
+-- Downslope Daily Leaderboard
 -- Paste into Supabase SQL editor and run.
 
 -- 1) Table

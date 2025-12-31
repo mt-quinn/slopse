@@ -1,4 +1,4 @@
-## Slopes (client)
+## Downslope (client)
 
 Portrait-first mobile web time-trial prototype.
 
