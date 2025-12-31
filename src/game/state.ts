@@ -66,6 +66,8 @@ export type RunState = {
     p: Vec2
     v: Vec2
     r: number
+    // Visual-only rotation for rendering (radians).
+    rot: number
     grounded: boolean
     groundMat: TrackMaterial
     groundN: Vec2
@@ -124,6 +126,7 @@ export const createInitialRunState = (track: TrackDef): RunState => {
       p: { x: track.start.p.x, y: platformY - discR },
       v: { x: 0, y: 0 },
       r: discR,
+      rot: 0,
       grounded: false,
       groundMat: 'normal',
       groundN: { x: 0, y: -1 },

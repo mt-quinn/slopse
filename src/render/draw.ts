@@ -11,6 +11,23 @@ const withDpr = (ctx: CanvasRenderingContext2D, dpr: number, fn: () => void) => 
   ctx.restore()
 }
 
+// Player marble image (loaded from /public).
+let ballImg: HTMLImageElement | null = null
+let ballImgReady = false
+const getBallImg = () => {
+  if (ballImg) return ballImg
+  const img = new Image()
+  img.src = '/ball.webp'
+  img.onload = () => {
+    ballImgReady = true
+  }
+  img.onerror = () => {
+    // keep ballImgReady false; we will fallback to simple circle rendering.
+  }
+  ballImg = img
+  return img
+}
+
 export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
@@ -135,75 +152,53 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       }
     }
 
-    // Player disc
+    // Player marble
     {
       const p = s.disc.p
       const r = s.disc.r
+      const img = getBallImg()
+
+      // subtle glow for readability
       const speed = Math.hypot(s.disc.v.x, s.disc.v.y)
       const heat = clamp(speed / 1800, 0, 1)
-
       ctx.save()
       ctx.globalCompositeOperation = 'lighter'
-      ctx.fillStyle = `rgba(255, 120, 210, ${0.10 + 0.18 * heat})`
+      ctx.fillStyle = `rgba(255, 120, 210, ${0.06 + 0.12 * heat})`
       ctx.beginPath()
-      ctx.arc(p.x, p.y, r * (2.3 + heat * 0.35), 0, Math.PI * 2)
+      ctx.arc(p.x, p.y, r * (2.25 + heat * 0.25), 0, Math.PI * 2)
       ctx.fill()
       ctx.restore()
 
-      ctx.save()
-      const grad = ctx.createRadialGradient(p.x - r * 0.35, p.y - r * 0.35, 2, p.x, p.y, r * 1.35)
-      grad.addColorStop(0, 'rgba(255,255,255,0.92)')
-      grad.addColorStop(0.55, 'rgba(255,245,200,0.92)')
-      grad.addColorStop(1, 'rgba(180,150,255,0.70)')
-      ctx.fillStyle = grad
-      ctx.beginPath()
-      ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.strokeStyle = 'rgba(0,0,0,0.38)'
-      ctx.lineWidth = 2
-      ctx.stroke()
-      ctx.restore()
-
-      // Upright “player” on top of disc (purely visual, no physics).
-      ctx.save()
-      ctx.globalCompositeOperation = 'source-over'
-      const bodyY = p.y - r - 10
-      ctx.strokeStyle = 'rgba(0,0,0,0.55)'
-      ctx.lineWidth = 6
-      ctx.lineCap = 'round'
-      // outline
-      ctx.beginPath()
-      ctx.moveTo(p.x, bodyY + 10)
-      ctx.lineTo(p.x, bodyY + 34)
-      ctx.stroke()
-      // fill
-      ctx.strokeStyle = 'rgba(255,246,213,0.95)'
-      ctx.lineWidth = 3
-      ctx.beginPath()
-      ctx.moveTo(p.x, bodyY + 10)
-      ctx.lineTo(p.x, bodyY + 34)
-      ctx.stroke()
-      // head
-      ctx.fillStyle = 'rgba(255,246,213,0.95)'
-      ctx.strokeStyle = 'rgba(0,0,0,0.45)'
-      ctx.lineWidth = 2
-      ctx.beginPath()
-      ctx.arc(p.x, bodyY, 7, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.stroke()
-      // Jet flame if thrusting
-      if (s.input.thrust && s.jet.energy > 0 && !s.dead && !s.finished) {
-        ctx.globalCompositeOperation = 'lighter'
-        ctx.fillStyle = 'rgba(120, 180, 255, 0.25)'
+      if (ballImgReady && img.naturalWidth > 0) {
+        ctx.save()
+        ctx.translate(p.x, p.y)
+        ctx.rotate(s.disc.rot)
+        ctx.imageSmoothingEnabled = true
+        const d = r * 2.15
+        ctx.drawImage(img, -d / 2, -d / 2, d, d)
+        // outline for contrast
+        ctx.strokeStyle = 'rgba(0,0,0,0.28)'
+        ctx.lineWidth = 2
         ctx.beginPath()
-        ctx.ellipse(p.x, bodyY + 46, 10, 18, 0, 0, Math.PI * 2)
-        ctx.fill()
-        ctx.fillStyle = 'rgba(120, 180, 255, 0.65)'
+        ctx.arc(0, 0, r, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.restore()
+      } else {
+        // Fallback: simple marble circle if image isn't ready yet.
+        ctx.save()
+        const grad = ctx.createRadialGradient(p.x - r * 0.35, p.y - r * 0.35, 2, p.x, p.y, r * 1.35)
+        grad.addColorStop(0, 'rgba(255,255,255,0.92)')
+        grad.addColorStop(0.55, 'rgba(255,245,200,0.92)')
+        grad.addColorStop(1, 'rgba(180,150,255,0.70)')
+        ctx.fillStyle = grad
         ctx.beginPath()
-        ctx.ellipse(p.x, bodyY + 44, 5, 10, 0, 0, Math.PI * 2)
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
         ctx.fill()
+        ctx.strokeStyle = 'rgba(0,0,0,0.38)'
+        ctx.lineWidth = 2
+        ctx.stroke()
+        ctx.restore()
       }
-      ctx.restore()
     }
 
     ctx.restore() // camera

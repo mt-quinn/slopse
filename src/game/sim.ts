@@ -50,6 +50,7 @@ export const stepSim = (s: RunState, dtSecRaw: number) => {
 
   for (let step = 0; step < subSteps; step++) {
     const disc = s.disc
+    const pBefore = { x: disc.p.x, y: disc.p.y }
 
     // Integrate time (ms) in the same sub-stepped loop so recording/playback aligns.
     s.timeMs += h * 1000
@@ -206,6 +207,21 @@ export const stepSim = (s: RunState, dtSecRaw: number) => {
     // BUT never refill while the player is actively using the jetpack.
     if (disc.grounded && !s.input.thrust) {
       s.jet.energy = clamp(s.jet.energy + h * 1.35, 0, JET_MAX_ENERGY)
+    }
+
+    // --- Visual rolling (distance-based, contact-aware) ---
+    // Standard approach used for wheels/balls in games:
+    //   Δθ = Δs / r   (rolling without slipping)
+    // where Δs is the signed distance traveled along the contact tangent.
+    // This is more stable than ω=v/r in a custom collision solver because it follows actual displacement.
+    {
+      const r = Math.max(1e-6, disc.r)
+      const dp = { x: disc.p.x - pBefore.x, y: disc.p.y - pBefore.y }
+      const ds = disc.grounded ? dot(dp, disc.groundT) : dp.x
+      // Canvas positive rotation reads clockwise (y-down). When moving forward (+ds), roll forward.
+      // Visual scaling: keep the same contact-aware logic, but slow the spin for readability.
+      disc.rot += (ds / r) * 0.6
+      if (disc.rot > Math.PI * 2 || disc.rot < -Math.PI * 2) disc.rot = disc.rot % (Math.PI * 2)
     }
 
     // Surface effects (kept intentionally simple + legible).
