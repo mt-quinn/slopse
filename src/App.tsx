@@ -762,7 +762,22 @@ export default function App() {
             {showOverlay && (
               <div className="overlay" role="dialog" aria-label={hud.finished ? 'Finished' : 'Crashed'}>
                 <div className="panel">
-                  <div className="panelTitle">{hud.finished ? 'Finished' : 'Out of bounds'}</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
+                    <div className="panelTitle">{hud.finished ? 'Finished' : 'Out of bounds'}</div>
+                    {hud.finished && submittedRunToken === runTokenRef.current && (
+                      <div style={{ 
+                        fontFamily: "'Nunito', system-ui, sans-serif",
+                        fontWeight: 800,
+                        fontSize: '0.85rem',
+                        color: 'rgba(255, 246, 213, 0.90)',
+                        textAlign: 'right',
+                        maxWidth: '180px',
+                        lineHeight: '1.3'
+                      }}>
+                        Replay to improve your rank!
+                      </div>
+                    )}
+                  </div>
                   <div className="panelBody">
                     <div>
                       <strong>Time:</strong> {fmtMs(hud.timeMs)}
