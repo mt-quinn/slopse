@@ -49,6 +49,43 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
 
+    // Colored area underneath the track (extends to bottom of screen)
+    {
+      const segs = s.track.segments
+      if (segs.length > 0) {
+        ctx.save()
+        ctx.fillStyle = '#00576F'
+        ctx.beginPath()
+        
+        // Start from the first segment
+        ctx.moveTo(segs[0]!.a.x, segs[0]!.a.y)
+        
+        // Follow the track path
+        for (let i = 0; i < segs.length; i++) {
+          const seg = segs[i]!
+          const prev = i > 0 ? segs[i - 1]! : null
+          const cont =
+            prev != null &&
+            Math.abs(prev.b.x - seg.a.x) < 1e-6 &&
+            Math.abs(prev.b.y - seg.a.y) < 1e-6
+          if (!cont) ctx.lineTo(seg.a.x, seg.a.y)
+          ctx.lineTo(seg.b.x, seg.b.y)
+        }
+        
+        // Extend to bottom of screen (in world coordinates)
+        // Calculate bottom of viewport in world space
+        const bottomWorldY = s.camera.y + (h / 2) / zoom
+        const lastSeg = segs[segs.length - 1]!
+        
+        // Draw down to bottom, then back along bottom, then close
+        ctx.lineTo(lastSeg.b.x, bottomWorldY)
+        ctx.lineTo(segs[0]!.a.x, bottomWorldY)
+        ctx.closePath()
+        ctx.fill()
+        ctx.restore()
+      }
+    }
+
     const drawTrackByMat = (mat: 'normal' | 'boost', strokeStyle: string, lineWidth: number, dashed?: number[]) => {
       ctx.save()
       ctx.strokeStyle = strokeStyle
