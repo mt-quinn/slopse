@@ -20,6 +20,13 @@ import {
 } from './game/leaderboard'
 import { applyCameraDeath, updateRunCamera } from './game/camera'
 import { startRun } from './game/runControl'
+import {
+  startBackgroundMusic,
+  pauseBackgroundMusic,
+  resumeBackgroundMusic,
+  setBackgroundMusicVolume,
+  getBackgroundMusicVolume,
+} from './game/audio'
 
 const fmtMs = (ms: number) => {
   const t = Math.max(0, Math.round(ms))
@@ -49,6 +56,7 @@ export default function App() {
   const dateKey = useMemo(() => localDateKey(), [])
   const track = useMemo(() => makeDailyTrack(dateKey), [dateKey])
   const [paused, setPaused] = useState(false)
+  const [musicVolume, setMusicVolume] = useState(() => getBackgroundMusicVolume())
 
   const stateRef = useRef<RunState | null>(null)
 
@@ -293,6 +301,9 @@ export default function App() {
     if (!started) return
     handledFinishRef.current = false
 
+    // Start background music when player takes control
+    startBackgroundMusic()
+
     setHud((h) => ({
       ...h,
       timeMs: 0,
@@ -456,6 +467,19 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey, { passive: false })
     return () => window.removeEventListener('keydown', onKey as any)
+  }, [])
+
+  // Pause music when tab loses focus
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        pauseBackgroundMusic()
+      } else {
+        resumeBackgroundMusic()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
   }, [])
 
   // Main loop (sim + draw).
@@ -923,11 +947,43 @@ export default function App() {
             {showPause && (
               <div className="overlay" role="dialog" aria-label="Paused">
                 <div className="panel">
-                  <div className="panelTitle">Paused</div>
-                  <div className="panelBody">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                     <div>
-                      <strong>Time:</strong> {fmtMs(hud.timeMs)}
+                      <div className="panelTitle" style={{ marginBottom: '0.5rem' }}>Paused</div>
+                      <div>
+                        <strong>Time:</strong> {fmtMs(hud.timeMs)}
+                      </div>
                     </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: '140px' }}>
+                      <label
+                        htmlFor="volume-slider"
+                        style={{
+                          fontSize: '0.9rem',
+                          opacity: 0.85,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Volume
+                      </label>
+                      <input
+                        id="volume-slider"
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={Math.round(musicVolume * 100)}
+                        onChange={(e) => {
+                          const vol = Number(e.target.value) / 100
+                          setMusicVolume(vol)
+                          setBackgroundMusicVolume(vol)
+                        }}
+                        style={{
+                          flex: 1,
+                          cursor: 'pointer',
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="panelBody">
                     {lbTop5 && lbTop5.length > 0 && (
                       <div style={{ marginTop: '0.85rem' }}>
                         <strong>High Scores</strong>
