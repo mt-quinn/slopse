@@ -13,7 +13,7 @@ export type InputState = {
   thrustPointerId: number | null
 }
 
-export type GhostSample = { t: number; x: number; y: number }
+export type GhostSample = { t: number; x: number; y: number; thrust?: boolean }
 
 export type GhostRun = {
   version: 1

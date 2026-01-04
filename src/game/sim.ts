@@ -273,18 +273,18 @@ export const stepSim = (s: RunState, dtSecRaw: number) => {
     if (s.recording.active && !s.dead && !s.finished) {
       const tSec = s.timeMs / 1000
       if (tSec + 1e-6 >= s.recording.nextSampleT) {
-        s.recording.samples.push({ t: tSec, x: disc.p.x, y: disc.p.y })
+        s.recording.samples.push({ t: tSec, x: disc.p.x, y: disc.p.y, thrust: thrusting })
         s.recording.nextSampleT = s.recording.samples.length / s.recording.samplesHz
       }
     }
   }
 }
 
-export const sampleGhostAt = (samples: Array<{ t: number; x: number; y: number }>, t: number) => {
+export const sampleGhostAt = (samples: Array<{ t: number; x: number; y: number; thrust?: boolean }>, t: number) => {
   if (samples.length === 0) return null
-  if (t <= samples[0]!.t) return { x: samples[0]!.x, y: samples[0]!.y }
+  if (t <= samples[0]!.t) return { x: samples[0]!.x, y: samples[0]!.y, thrust: samples[0]!.thrust }
   const last = samples[samples.length - 1]!
-  if (t >= last.t) return { x: last.x, y: last.y }
+  if (t >= last.t) return { x: last.x, y: last.y, thrust: last.thrust }
 
   // Linear search is fine for v1 sample counts; if needed we can binary search.
   for (let i = 1; i < samples.length; i++) {
@@ -293,10 +293,12 @@ export const sampleGhostAt = (samples: Array<{ t: number; x: number; y: number }
       const a = samples[i - 1]!
       const span = Math.max(1e-6, b.t - a.t)
       const u = clamp((t - a.t) / span, 0, 1)
-      return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u }
+      // Show thrust if either sample was thrusting for better visual feedback
+      const thrust = a.thrust || b.thrust
+      return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, thrust }
     }
   }
-  return { x: last.x, y: last.y }
+  return { x: last.x, y: last.y, thrust: last.thrust }
 }
 
 
