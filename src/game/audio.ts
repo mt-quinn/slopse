@@ -126,8 +126,11 @@ export const setBackgroundMusicVolume = (volume: number) => {
     // localStorage might not be available
   }
   
+  // CRITICAL: Always update volume on existing audio element immediately
   if (bgmElement) {
     bgmElement.volume = clampedVolume
+    // Force volume update by accessing the property
+    const _ = bgmElement.volume
   }
 }
 
@@ -216,11 +219,16 @@ export const setSfxVolume = (volume: number) => {
     // localStorage might not be available
   }
   
+  // CRITICAL: Always update volume on existing audio elements immediately
   if (jetpackSfx) {
     jetpackSfx.volume = clampedVolume
+    // Force volume update by accessing the property
+    const _ = jetpackSfx.volume
   }
   if (rollingballSfx) {
     rollingballSfx.volume = clampedVolume
+    // Force volume update by accessing the property
+    const __ = rollingballSfx.volume
   }
 }
 

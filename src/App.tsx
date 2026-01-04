@@ -1007,6 +1007,11 @@ export default function App() {
                           min="0"
                           max="100"
                           value={Math.round(musicVolume * 100)}
+                          onInput={(e) => {
+                            const vol = Number((e.target as HTMLInputElement).value) / 100
+                            setMusicVolume(vol)
+                            setBackgroundMusicVolume(vol)
+                          }}
                           onChange={(e) => {
                             const vol = Number(e.target.value) / 100
                             setMusicVolume(vol)
@@ -1035,6 +1040,11 @@ export default function App() {
                           min="0"
                           max="100"
                           value={Math.round(sfxVolume * 100)}
+                          onInput={(e) => {
+                            const vol = Number((e.target as HTMLInputElement).value) / 100
+                            setSfxVolumeState(vol)
+                            setSfxVolume(vol)
+                          }}
                           onChange={(e) => {
                             const vol = Number(e.target.value) / 100
                             setSfxVolumeState(vol)
