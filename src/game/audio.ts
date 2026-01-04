@@ -25,3 +25,40 @@ export const startBackgroundMusic = () => {
     })
   }
 }
+
+/**
+ * Pause background music.
+ */
+export const pauseBackgroundMusic = () => {
+  if (audioElement && !audioElement.paused) {
+    audioElement.pause()
+  }
+}
+
+/**
+ * Resume background music.
+ */
+export const resumeBackgroundMusic = () => {
+  if (audioElement && audioElement.paused) {
+    audioElement.play().catch((err) => {
+      console.warn('Background music playback failed (browser may have blocked autoplay):', err)
+    })
+  }
+}
+
+/**
+ * Set background music volume (0.0 to 1.0).
+ */
+export const setBackgroundMusicVolume = (volume: number) => {
+  const clampedVolume = Math.max(0, Math.min(1, volume))
+  if (audioElement) {
+    audioElement.volume = clampedVolume
+  }
+}
+
+/**
+ * Get current background music volume (0.0 to 1.0).
+ */
+export const getBackgroundMusicVolume = (): number => {
+  return audioElement?.volume ?? DEFAULT_VOLUME
+}
