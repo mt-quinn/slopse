@@ -4,11 +4,42 @@
 const DEFAULT_BGM_VOLUME = 0.33
 const DEFAULT_SFX_VOLUME = 0.5
 
+// Load persisted volumes from localStorage or use defaults
+const loadBgmVolume = (): number => {
+  try {
+    const saved = localStorage.getItem('slopes-bgm-volume')
+    if (saved !== null) {
+      const parsed = parseFloat(saved)
+      if (!isNaN(parsed) && parsed >= 0 && parsed <= 1) {
+        return parsed
+      }
+    }
+  } catch (e) {
+    // localStorage might not be available
+  }
+  return DEFAULT_BGM_VOLUME
+}
+
+const loadSfxVolume = (): number => {
+  try {
+    const saved = localStorage.getItem('slopes-sfx-volume')
+    if (saved !== null) {
+      const parsed = parseFloat(saved)
+      if (!isNaN(parsed) && parsed >= 0 && parsed <= 1) {
+        return parsed
+      }
+    }
+  } catch (e) {
+    // localStorage might not be available
+  }
+  return DEFAULT_SFX_VOLUME
+}
+
 let bgmElement: HTMLAudioElement | null = null
-let bgmVolume = DEFAULT_BGM_VOLUME
+let bgmVolume = loadBgmVolume()
 let bgmNeedsUserGesture = false
 
-let sfxVolume = DEFAULT_SFX_VOLUME
+let sfxVolume = loadSfxVolume()
 let jetpackSfx: HTMLAudioElement | null = null
 let rollingballSfx: HTMLAudioElement | null = null
 
@@ -84,6 +115,14 @@ export const tryResumeBackgroundMusicAfterGesture = () => {
 export const setBackgroundMusicVolume = (volume: number) => {
   const clampedVolume = Math.max(0, Math.min(1, volume))
   bgmVolume = clampedVolume
+  
+  // Persist to localStorage
+  try {
+    localStorage.setItem('slopes-bgm-volume', String(clampedVolume))
+  } catch (e) {
+    // localStorage might not be available
+  }
+  
   if (bgmElement) {
     bgmElement.volume = clampedVolume
   }
@@ -160,6 +199,14 @@ export const stopRollingballSfx = () => {
 export const setSfxVolume = (volume: number) => {
   const clampedVolume = Math.max(0, Math.min(1, volume))
   sfxVolume = clampedVolume
+  
+  // Persist to localStorage
+  try {
+    localStorage.setItem('slopes-sfx-volume', String(clampedVolume))
+  } catch (e) {
+    // localStorage might not be available
+  }
+  
   if (jetpackSfx) {
     jetpackSfx.volume = clampedVolume
   }
