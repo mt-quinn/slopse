@@ -293,8 +293,8 @@ export const sampleGhostAt = (samples: Array<{ t: number; x: number; y: number; 
       const a = samples[i - 1]!
       const span = Math.max(1e-6, b.t - a.t)
       const u = clamp((t - a.t) / span, 0, 1)
-      // Use the thrust state from the earlier sample (or both if we want to be more precise)
-      const thrust = u < 0.5 ? a.thrust : b.thrust
+      // Show thrust if either sample was thrusting for better visual feedback
+      const thrust = a.thrust || b.thrust
       return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, thrust }
     }
   }
