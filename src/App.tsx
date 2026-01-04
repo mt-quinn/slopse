@@ -99,7 +99,6 @@ export default function App() {
   type HudState = {
     timeMs: number
     energy: number
-    speedMph: number
     coins: number
     coinsTotal: number
     bestTimeMs: number | null
@@ -111,7 +110,6 @@ export default function App() {
   const [hud, setHud] = useState<HudState>(() => ({
     timeMs: 0,
     energy: 1,
-    speedMph: 0,
     coins: 0,
     coinsTotal: track.coins.length,
     bestTimeMs: typeof window !== 'undefined' ? loadBestTimeMs(track.id) : null,
@@ -238,7 +236,6 @@ export default function App() {
       setHud({
         timeMs: 0,
         energy: 1,
-        speedMph: 0,
         coins: 0,
         coinsTotal: 0,
         bestTimeMs: s.bestTimeMs,
@@ -267,7 +264,6 @@ export default function App() {
     setHud({
       timeMs: 0,
       energy: 1,
-      speedMph: 0,
       coins: 0,
       coinsTotal: track.coins.length,
       bestTimeMs: s.bestTimeMs,
@@ -301,7 +297,6 @@ export default function App() {
       ...h,
       timeMs: 0,
       energy: 1,
-      speedMph: 0,
       coins: 0,
       coinsTotal: s.track.coins.length,
       dead: false,
@@ -342,7 +337,6 @@ export default function App() {
       ...h,
       timeMs: 0,
       energy: 1,
-      speedMph: 0,
       coins: 0,
       coinsTotal: prev.track.coins.length,
       dead: false,
@@ -601,12 +595,9 @@ export default function App() {
       if (bucket !== hudBucketRef.current) {
         hudBucketRef.current = bucket
         const rr = s.result
-        const speedPxPerSec = Math.hypot(s.disc.v.x, s.disc.v.y)
-        const speedMph = Math.round(speedPxPerSec / 10)
         setHud({
           timeMs: s.timeMs,
           energy: s.jet.energy,
-          speedMph,
           coins: s.coinsCollected.size,
           coinsTotal: s.track.coins.length,
           bestTimeMs: s.bestTimeMs,
@@ -706,14 +697,6 @@ export default function App() {
                     Best {fmtMs(hud.bestTimeMs)}
                   </div>
                 )}
-              </div>
-
-              <div className="hudSpeedCard" aria-label="Speed">
-                <div className="hudMajorLabel">SPEED</div>
-                <div className="hudSpeedValue">
-                  <span className="hudSpeedNum">{hud.speedMph}</span>
-                  <span className="hudSpeedUnit">mph</span>
-                </div>
               </div>
 
               <div className="hudControls" aria-label="Controls">
