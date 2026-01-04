@@ -1,5 +1,7 @@
-// Audio management for background music and sound effects
-// The music starts playing when the player takes control and loops continuously.
+// Audio management using Howler.js for reliable, cross-browser audio playback
+// Howler.js provides robust volume control and seamless looping
+
+import { Howl } from 'howler'
 
 const DEFAULT_BGM_VOLUME = 0.33
 const DEFAULT_SFX_VOLUME = 0.5
@@ -35,85 +37,83 @@ const loadSfxVolume = (): number => {
   return DEFAULT_SFX_VOLUME
 }
 
-let bgmElement: HTMLAudioElement | null = null
 let bgmVolume = loadBgmVolume()
 let bgmNeedsUserGesture = false
 
 let sfxVolume = loadSfxVolume()
-let jetpackSfx: HTMLAudioElement | null = null
-let rollingballSfx: HTMLAudioElement | null = null
+
+// Howler audio instances
+let bgmSound: Howl | null = null
+let jetpackSound: Howl | null = null
+let rollingballSound: Howl | null = null
 
 /**
- * Initialize and start background music.
- * This function is idempotent - calling it multiple times won't restart the music.
+ * Initialize and start background music using Howler.js
  */
 export const startBackgroundMusic = () => {
-  // Create audio element if it doesn't exist
-  if (!bgmElement) {
-    bgmElement = new Audio('/backgroundmusic.mp3')
-    bgmElement.loop = true
-    bgmElement.volume = bgmVolume
+  // Create Howler instance if it doesn't exist
+  if (!bgmSound) {
+    bgmSound = new Howl({
+      src: ['/backgroundmusic.mp3'],
+      loop: true,
+      volume: bgmVolume,
+      html5: true, // Use HTML5 Audio for streaming (better for music)
+    })
   } else {
-    // Ensure volume is correct even if element exists
-    bgmElement.volume = bgmVolume
+    // Update volume to current setting
+    bgmSound.volume(bgmVolume)
   }
 
-  // Start playing only if currently paused
-  if (bgmElement.paused) {
-    bgmElement.play().catch((err) => {
-      // Browser may block autoplay - this is expected and handled gracefully
-      console.warn('Background music playback failed (browser may have blocked autoplay):', err)
+  // Start playing only if not already playing
+  if (!bgmSound.playing()) {
+    bgmSound.play()
+    bgmSound.once('playerror', () => {
       bgmNeedsUserGesture = true
     })
   }
 }
 
 /**
- * Pause background music.
+ * Pause background music
  */
 export const pauseBackgroundMusic = () => {
-  if (bgmElement && !bgmElement.paused) {
-    bgmElement.pause()
+  if (bgmSound && bgmSound.playing()) {
+    bgmSound.pause()
   }
 }
 
 /**
- * Resume background music.
- * Returns true if resume was attempted, false if it needs user gesture.
+ * Resume background music
  */
 export const resumeBackgroundMusic = (): boolean => {
-  if (bgmElement && bgmElement.paused) {
-    bgmElement.play().catch((err) => {
-      console.warn('Background music playback failed (browser may have blocked autoplay):', err)
-      bgmNeedsUserGesture = true
-    })
+  if (bgmSound && !bgmSound.playing()) {
+    bgmSound.play()
     return true
   }
   return false
 }
 
 /**
- * Check if BGM needs a user gesture to resume.
+ * Check if BGM needs a user gesture to resume
  */
 export const bgmNeedsUserInteraction = (): boolean => {
   return bgmNeedsUserGesture
 }
 
 /**
- * Attempt to resume BGM after user interaction.
+ * Attempt to resume BGM after user interaction
  */
 export const tryResumeBackgroundMusicAfterGesture = () => {
-  if (bgmNeedsUserGesture && bgmElement && bgmElement.paused) {
-    bgmElement.play().then(() => {
+  if (bgmNeedsUserGesture && bgmSound && !bgmSound.playing()) {
+    bgmSound.play()
+    bgmSound.once('play', () => {
       bgmNeedsUserGesture = false
-    }).catch((err) => {
-      console.warn('Background music resume after gesture failed:', err)
     })
   }
 }
 
 /**
- * Set background music volume (0.0 to 1.0).
+ * Set background music volume (0.0 to 1.0) - REAL-TIME UPDATE
  */
 export const setBackgroundMusicVolume = (volume: number) => {
   const clampedVolume = Math.max(0, Math.min(1, volume))
@@ -126,87 +126,84 @@ export const setBackgroundMusicVolume = (volume: number) => {
     // localStorage might not be available
   }
   
-  // CRITICAL: Always update volume on existing audio element immediately
-  if (bgmElement) {
-    bgmElement.volume = clampedVolume
-    // Force volume update by accessing the property
-    const _ = bgmElement.volume
+  // CRITICAL: Update Howler volume immediately - this updates in real-time
+  if (bgmSound) {
+    bgmSound.volume(clampedVolume)
   }
 }
 
 /**
- * Get current background music volume (0.0 to 1.0).
+ * Get current background music volume (0.0 to 1.0)
  */
 export const getBackgroundMusicVolume = (): number => {
   return bgmVolume
 }
 
 /**
- * Initialize SFX audio elements.
+ * Initialize SFX Howler instances
  */
 const initSfx = () => {
-  if (!jetpackSfx) {
-    jetpackSfx = new Audio('/Jetpack.wav')
-    jetpackSfx.loop = true
-    jetpackSfx.volume = sfxVolume
+  if (!jetpackSound) {
+    jetpackSound = new Howl({
+      src: ['/Jetpack.wav'],
+      loop: true,
+      volume: sfxVolume,
+    })
   } else {
-    // Ensure volume is correct even if element exists
-    jetpackSfx.volume = sfxVolume
+    jetpackSound.volume(sfxVolume)
   }
-  if (!rollingballSfx) {
-    rollingballSfx = new Audio('/Rollingball.wav')
-    rollingballSfx.loop = true
-    rollingballSfx.volume = sfxVolume
+  
+  if (!rollingballSound) {
+    rollingballSound = new Howl({
+      src: ['/Rollingball.wav'],
+      loop: true,
+      volume: sfxVolume,
+    })
   } else {
-    // Ensure volume is correct even if element exists
-    rollingballSfx.volume = sfxVolume
+    rollingballSound.volume(sfxVolume)
   }
 }
 
 /**
- * Play jetpack sound effect (looping).
+ * Play jetpack sound effect (looping)
  */
 export const playJetpackSfx = () => {
   initSfx()
-  if (jetpackSfx && jetpackSfx.paused) {
-    jetpackSfx.play().catch((err) => {
-      console.warn('Jetpack SFX playback failed:', err)
-    })
+  if (jetpackSound && !jetpackSound.playing()) {
+    jetpackSound.play()
   }
 }
 
 /**
- * Stop jetpack sound effect.
+ * Stop jetpack sound effect
  */
 export const stopJetpackSfx = () => {
-  if (jetpackSfx && !jetpackSfx.paused) {
-    jetpackSfx.pause()
+  if (jetpackSound && jetpackSound.playing()) {
+    jetpackSound.pause()
   }
 }
 
 /**
- * Play rolling ball sound effect (looping).
+ * Play rolling ball sound effect (looping)
  */
 export const playRollingballSfx = () => {
   initSfx()
-  if (rollingballSfx && rollingballSfx.paused) {
-    rollingballSfx.play().catch((err) => {
-      console.warn('Rolling ball SFX playback failed:', err)
-    })
+  if (rollingballSound && !rollingballSound.playing()) {
+    rollingballSound.play()
   }
 }
 
 /**
- * Stop rolling ball sound effect.
+ * Stop rolling ball sound effect
  */
 export const stopRollingballSfx = () => {
-  if (rollingballSfx && !rollingballSfx.paused) {
-    rollingballSfx.pause()
+  if (rollingballSound && rollingballSound.playing()) {
+    rollingballSound.pause()
   }
 }
 
 /**
- * Set SFX volume (0.0 to 1.0).
+ * Set SFX volume (0.0 to 1.0) - REAL-TIME UPDATE
  */
 export const setSfxVolume = (volume: number) => {
   const clampedVolume = Math.max(0, Math.min(1, volume))
@@ -219,34 +216,30 @@ export const setSfxVolume = (volume: number) => {
     // localStorage might not be available
   }
   
-  // CRITICAL: Always update volume on existing audio elements immediately
-  if (jetpackSfx) {
-    jetpackSfx.volume = clampedVolume
-    // Force volume update by accessing the property
-    const _ = jetpackSfx.volume
+  // CRITICAL: Update Howler volumes immediately - this updates in real-time
+  if (jetpackSound) {
+    jetpackSound.volume(clampedVolume)
   }
-  if (rollingballSfx) {
-    rollingballSfx.volume = clampedVolume
-    // Force volume update by accessing the property
-    const __ = rollingballSfx.volume
+  if (rollingballSound) {
+    rollingballSound.volume(clampedVolume)
   }
 }
 
 /**
- * Get current SFX volume (0.0 to 1.0).
+ * Get current SFX volume (0.0 to 1.0)
  */
 export const getSfxVolume = (): number => {
   return sfxVolume
 }
 
 /**
- * Pause all SFX (used when app loses focus).
+ * Pause all SFX (used when app loses focus)
  */
 export const pauseAllSfx = () => {
-  if (jetpackSfx && !jetpackSfx.paused) {
-    jetpackSfx.pause()
+  if (jetpackSound && jetpackSound.playing()) {
+    jetpackSound.pause()
   }
-  if (rollingballSfx && !rollingballSfx.paused) {
-    rollingballSfx.pause()
+  if (rollingballSound && rollingballSound.playing()) {
+    rollingballSound.pause()
   }
 }
