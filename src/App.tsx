@@ -20,6 +20,7 @@ import {
 } from './game/leaderboard'
 import { applyCameraDeath, updateRunCamera } from './game/camera'
 import { startRun } from './game/runControl'
+import { startBackgroundMusic } from './game/audio'
 
 const fmtMs = (ms: number) => {
   const t = Math.max(0, Math.round(ms))
@@ -292,6 +293,9 @@ export default function App() {
     const started = startRun(s)
     if (!started) return
     handledFinishRef.current = false
+
+    // Start background music when player takes control
+    startBackgroundMusic()
 
     setHud((h) => ({
       ...h,
