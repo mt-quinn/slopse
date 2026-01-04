@@ -28,6 +28,79 @@ const getBallImg = () => {
   return img
 }
 
+// Draw a downward-facing flame jet indicator
+const drawFlameJet = (
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r: number,
+  alpha: number,
+  isGhost: boolean
+) => {
+  ctx.save()
+  ctx.globalAlpha = alpha
+  
+  // Position the flame below the disc/marble
+  const flameY = y + r
+  const flameHeight = r * 1.8
+  const flameWidth = r * 0.9
+  
+  // Create a flame shape with 3 tongues
+  ctx.beginPath()
+  
+  // Center flame tongue
+  ctx.moveTo(x, flameY)
+  ctx.quadraticCurveTo(x, flameY + flameHeight * 0.6, x, flameY + flameHeight)
+  
+  // Left flame tongue
+  ctx.moveTo(x - flameWidth * 0.4, flameY + flameHeight * 0.2)
+  ctx.quadraticCurveTo(
+    x - flameWidth * 0.5,
+    flameY + flameHeight * 0.6,
+    x - flameWidth * 0.3,
+    flameY + flameHeight * 0.85
+  )
+  
+  // Right flame tongue
+  ctx.moveTo(x + flameWidth * 0.4, flameY + flameHeight * 0.2)
+  ctx.quadraticCurveTo(
+    x + flameWidth * 0.5,
+    flameY + flameHeight * 0.6,
+    x + flameWidth * 0.3,
+    flameY + flameHeight * 0.85
+  )
+  
+  // Style the flame
+  if (isGhost) {
+    // Ghost flame: lighter blue
+    ctx.strokeStyle = 'rgba(140, 190, 255, 0.85)'
+    ctx.lineWidth = 3
+    ctx.lineCap = 'round'
+    ctx.setLineDash([4, 4])
+  } else {
+    // Player flame: bright orange/yellow gradient
+    const gradient = ctx.createLinearGradient(x, flameY, x, flameY + flameHeight)
+    gradient.addColorStop(0, 'rgba(255, 220, 100, 0.95)')
+    gradient.addColorStop(0.5, 'rgba(255, 140, 60, 0.85)')
+    gradient.addColorStop(1, 'rgba(255, 80, 40, 0.6)')
+    ctx.strokeStyle = gradient
+    ctx.lineWidth = 4
+    ctx.lineCap = 'round'
+  }
+  
+  ctx.stroke()
+  
+  // Add a glow effect for the player's flame
+  if (!isGhost) {
+    ctx.globalCompositeOperation = 'lighter'
+    ctx.strokeStyle = 'rgba(255, 200, 80, 0.4)'
+    ctx.lineWidth = 7
+    ctx.stroke()
+  }
+  
+  ctx.restore()
+}
+
 export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
@@ -178,6 +251,12 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       const p = sampleGhostAt(s.bestGhost.samples, t)
       if (p) {
         const r = s.disc.r
+        
+        // Draw ghost flame jet if thrusting
+        if (p.thrust) {
+          drawFlameJet(ctx, p.x, p.y, r, 0.42, true)
+        }
+        
         ctx.save()
         ctx.globalAlpha = 0.42
         ctx.strokeStyle = 'rgba(140, 190, 255, 0.95)'
@@ -194,6 +273,12 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       const p = s.disc.p
       const r = s.disc.r
       const img = getBallImg()
+
+      // Draw player flame jet if thrusting
+      const thrusting = s.input.thrust && s.jet.energy > 0 && !s.finished && !s.dead
+      if (thrusting) {
+        drawFlameJet(ctx, p.x, p.y, r, 1.0, false)
+      }
 
       // subtle glow for readability
       const speed = Math.hypot(s.disc.v.x, s.disc.v.y)
