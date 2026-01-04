@@ -26,6 +26,13 @@ import {
   resumeBackgroundMusic,
   setBackgroundMusicVolume,
   getBackgroundMusicVolume,
+  tryResumeBackgroundMusicAfterGesture,
+  setSfxVolume,
+  getSfxVolume,
+  playJetpackSfx,
+  stopJetpackSfx,
+  playRollingballSfx,
+  stopRollingballSfx,
 } from './game/audio'
 
 const fmtMs = (ms: number) => {
@@ -57,6 +64,7 @@ export default function App() {
   const track = useMemo(() => makeDailyTrack(dateKey), [dateKey])
   const [paused, setPaused] = useState(false)
   const [musicVolume, setMusicVolume] = useState(() => getBackgroundMusicVolume())
+  const [sfxVolume, setSfxVolumeState] = useState(() => getSfxVolume())
 
   const stateRef = useRef<RunState | null>(null)
 
@@ -364,6 +372,9 @@ export default function App() {
   // Pointer input: press anywhere to thrust; release to stop.
   useEffect(() => {
     const onDown = (e: PointerEvent) => {
+      // Try to resume BGM after user gesture (for mobile browsers)
+      tryResumeBackgroundMusicAfterGesture()
+
       // Allow normal UI interactions (name entry, buttons, etc).
       const t = e.target as any
       const el: HTMLElement | null = t && typeof t === 'object' && 'closest' in t ? (t as HTMLElement) : null
@@ -469,12 +480,13 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey as any)
   }, [])
 
-  // Pause music when tab loses focus
+  // Pause music when tab loses focus, resume when it regains focus
   useEffect(() => {
     const onVisibilityChange = () => {
       if (document.hidden) {
         pauseBackgroundMusic()
       } else {
+        // Try to resume - mobile browsers may block this
         resumeBackgroundMusic()
       }
     }
@@ -571,6 +583,27 @@ export default function App() {
           updateRunCamera(s)
           applyCameraDeath(s)
         }
+      }
+
+      // SFX management: play/stop jetpack and rolling ball sounds based on game state
+      if (!paused && !replayRef.current && s.runStarted && !s.dead && !s.finished) {
+        // Jetpack sound: play when thrusting, stop otherwise
+        if (s.input.thrust && s.jet.energy > 0) {
+          playJetpackSfx()
+        } else {
+          stopJetpackSfx()
+        }
+
+        // Rolling ball sound: play when grounded, stop when in air
+        if (s.disc.grounded) {
+          playRollingballSfx()
+        } else {
+          stopRollingballSfx()
+        }
+      } else {
+        // Stop all SFX when paused, in replay, or not running
+        stopJetpackSfx()
+        stopRollingballSfx()
       }
 
       // If we finished and it’s a new best, persist best time + ghost (positions).
@@ -947,40 +980,70 @@ export default function App() {
             {showPause && (
               <div className="overlay" role="dialog" aria-label="Paused">
                 <div className="panel">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
                     <div>
                       <div className="panelTitle" style={{ marginBottom: '0.5rem' }}>Paused</div>
                       <div>
                         <strong>Time:</strong> {fmtMs(hud.timeMs)}
                       </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: '140px' }}>
-                      <label
-                        htmlFor="volume-slider"
-                        style={{
-                          fontSize: '0.9rem',
-                          opacity: 0.85,
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        Volume
-                      </label>
-                      <input
-                        id="volume-slider"
-                        type="range"
-                        min="0"
-                        max="100"
-                        value={Math.round(musicVolume * 100)}
-                        onChange={(e) => {
-                          const vol = Number(e.target.value) / 100
-                          setMusicVolume(vol)
-                          setBackgroundMusicVolume(vol)
-                        }}
-                        style={{
-                          flex: 1,
-                          cursor: 'pointer',
-                        }}
-                      />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', minWidth: '140px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <label
+                          htmlFor="bgm-slider"
+                          style={{
+                            fontSize: '0.9rem',
+                            opacity: 0.85,
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          BGM
+                        </label>
+                        <input
+                          id="bgm-slider"
+                          type="range"
+                          min="0"
+                          max="100"
+                          value={Math.round(musicVolume * 100)}
+                          onChange={(e) => {
+                            const vol = Number(e.target.value) / 100
+                            setMusicVolume(vol)
+                            setBackgroundMusicVolume(vol)
+                          }}
+                          style={{
+                            flex: 1,
+                            cursor: 'pointer',
+                          }}
+                        />
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <label
+                          htmlFor="sfx-slider"
+                          style={{
+                            fontSize: '0.9rem',
+                            opacity: 0.85,
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          SFX
+                        </label>
+                        <input
+                          id="sfx-slider"
+                          type="range"
+                          min="0"
+                          max="100"
+                          value={Math.round(sfxVolume * 100)}
+                          onChange={(e) => {
+                            const vol = Number(e.target.value) / 100
+                            setSfxVolumeState(vol)
+                            setSfxVolume(vol)
+                          }}
+                          style={{
+                            flex: 1,
+                            cursor: 'pointer',
+                          }}
+                        />
+                      </div>
                     </div>
                   </div>
                   <div className="panelBody">

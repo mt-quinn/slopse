@@ -1,10 +1,16 @@
-// Background music management
+// Audio management for background music and sound effects
 // The music starts playing when the player takes control and loops continuously.
 
-const DEFAULT_VOLUME = 0.5
+const DEFAULT_BGM_VOLUME = 0.5
+const DEFAULT_SFX_VOLUME = 0.5
 
-let audioElement: HTMLAudioElement | null = null
-let currentVolume = DEFAULT_VOLUME
+let bgmElement: HTMLAudioElement | null = null
+let bgmVolume = DEFAULT_BGM_VOLUME
+let bgmNeedsUserGesture = false
+
+let sfxVolume = DEFAULT_SFX_VOLUME
+let jetpackSfx: HTMLAudioElement | null = null
+let rollingballSfx: HTMLAudioElement | null = null
 
 /**
  * Initialize and start background music.
@@ -12,17 +18,18 @@ let currentVolume = DEFAULT_VOLUME
  */
 export const startBackgroundMusic = () => {
   // Create audio element if it doesn't exist
-  if (!audioElement) {
-    audioElement = new Audio('/backgroundmusic.mp3')
-    audioElement.loop = true
-    audioElement.volume = currentVolume
+  if (!bgmElement) {
+    bgmElement = new Audio('/backgroundmusic.mp3')
+    bgmElement.loop = true
+    bgmElement.volume = bgmVolume
   }
 
   // Start playing only if currently paused
-  if (audioElement.paused) {
-    audioElement.play().catch((err) => {
+  if (bgmElement.paused) {
+    bgmElement.play().catch((err) => {
       // Browser may block autoplay - this is expected and handled gracefully
       console.warn('Background music playback failed (browser may have blocked autoplay):', err)
+      bgmNeedsUserGesture = true
     })
   }
 }
@@ -31,18 +38,42 @@ export const startBackgroundMusic = () => {
  * Pause background music.
  */
 export const pauseBackgroundMusic = () => {
-  if (audioElement && !audioElement.paused) {
-    audioElement.pause()
+  if (bgmElement && !bgmElement.paused) {
+    bgmElement.pause()
   }
 }
 
 /**
  * Resume background music.
+ * Returns true if resume was attempted, false if it needs user gesture.
  */
-export const resumeBackgroundMusic = () => {
-  if (audioElement && audioElement.paused) {
-    audioElement.play().catch((err) => {
+export const resumeBackgroundMusic = (): boolean => {
+  if (bgmElement && bgmElement.paused) {
+    bgmElement.play().catch((err) => {
       console.warn('Background music playback failed (browser may have blocked autoplay):', err)
+      bgmNeedsUserGesture = true
+    })
+    return true
+  }
+  return false
+}
+
+/**
+ * Check if BGM needs a user gesture to resume.
+ */
+export const bgmNeedsUserInteraction = (): boolean => {
+  return bgmNeedsUserGesture
+}
+
+/**
+ * Attempt to resume BGM after user interaction.
+ */
+export const tryResumeBackgroundMusicAfterGesture = () => {
+  if (bgmNeedsUserGesture && bgmElement && bgmElement.paused) {
+    bgmElement.play().then(() => {
+      bgmNeedsUserGesture = false
+    }).catch((err) => {
+      console.warn('Background music resume after gesture failed:', err)
     })
   }
 }
@@ -52,9 +83,9 @@ export const resumeBackgroundMusic = () => {
  */
 export const setBackgroundMusicVolume = (volume: number) => {
   const clampedVolume = Math.max(0, Math.min(1, volume))
-  currentVolume = clampedVolume
-  if (audioElement) {
-    audioElement.volume = clampedVolume
+  bgmVolume = clampedVolume
+  if (bgmElement) {
+    bgmElement.volume = clampedVolume
   }
 }
 
@@ -62,5 +93,84 @@ export const setBackgroundMusicVolume = (volume: number) => {
  * Get current background music volume (0.0 to 1.0).
  */
 export const getBackgroundMusicVolume = (): number => {
-  return currentVolume
+  return bgmVolume
+}
+
+/**
+ * Initialize SFX audio elements.
+ */
+const initSfx = () => {
+  if (!jetpackSfx) {
+    jetpackSfx = new Audio('/Jetpack.wav')
+    jetpackSfx.loop = true
+    jetpackSfx.volume = sfxVolume
+  }
+  if (!rollingballSfx) {
+    rollingballSfx = new Audio('/Rollingball.wav')
+    rollingballSfx.loop = true
+    rollingballSfx.volume = sfxVolume
+  }
+}
+
+/**
+ * Play jetpack sound effect (looping).
+ */
+export const playJetpackSfx = () => {
+  initSfx()
+  if (jetpackSfx && jetpackSfx.paused) {
+    jetpackSfx.play().catch((err) => {
+      console.warn('Jetpack SFX playback failed:', err)
+    })
+  }
+}
+
+/**
+ * Stop jetpack sound effect.
+ */
+export const stopJetpackSfx = () => {
+  if (jetpackSfx && !jetpackSfx.paused) {
+    jetpackSfx.pause()
+  }
+}
+
+/**
+ * Play rolling ball sound effect (looping).
+ */
+export const playRollingballSfx = () => {
+  initSfx()
+  if (rollingballSfx && rollingballSfx.paused) {
+    rollingballSfx.play().catch((err) => {
+      console.warn('Rolling ball SFX playback failed:', err)
+    })
+  }
+}
+
+/**
+ * Stop rolling ball sound effect.
+ */
+export const stopRollingballSfx = () => {
+  if (rollingballSfx && !rollingballSfx.paused) {
+    rollingballSfx.pause()
+  }
+}
+
+/**
+ * Set SFX volume (0.0 to 1.0).
+ */
+export const setSfxVolume = (volume: number) => {
+  const clampedVolume = Math.max(0, Math.min(1, volume))
+  sfxVolume = clampedVolume
+  if (jetpackSfx) {
+    jetpackSfx.volume = clampedVolume
+  }
+  if (rollingballSfx) {
+    rollingballSfx.volume = clampedVolume
+  }
+}
+
+/**
+ * Get current SFX volume (0.0 to 1.0).
+ */
+export const getSfxVolume = (): number => {
+  return sfxVolume
 }
