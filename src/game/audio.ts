@@ -53,6 +53,9 @@ export const startBackgroundMusic = () => {
     bgmElement = new Audio('/backgroundmusic.mp3')
     bgmElement.loop = true
     bgmElement.volume = bgmVolume
+  } else {
+    // Ensure volume is correct even if element exists
+    bgmElement.volume = bgmVolume
   }
 
   // Start playing only if currently paused
@@ -143,10 +146,16 @@ const initSfx = () => {
     jetpackSfx = new Audio('/Jetpack.wav')
     jetpackSfx.loop = true
     jetpackSfx.volume = sfxVolume
+  } else {
+    // Ensure volume is correct even if element exists
+    jetpackSfx.volume = sfxVolume
   }
   if (!rollingballSfx) {
     rollingballSfx = new Audio('/Rollingball.wav')
     rollingballSfx.loop = true
+    rollingballSfx.volume = sfxVolume
+  } else {
+    // Ensure volume is correct even if element exists
     rollingballSfx.volume = sfxVolume
   }
 }
