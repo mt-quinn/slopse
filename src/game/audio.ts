@@ -14,7 +14,7 @@ const loadBgmVolume = (): number => {
         return parsed
       }
     }
-  } catch (e) {
+  } catch {
     // localStorage might not be available
   }
   return DEFAULT_BGM_VOLUME
@@ -29,7 +29,7 @@ const loadSfxVolume = (): number => {
         return parsed
       }
     }
-  } catch (e) {
+  } catch {
     // localStorage might not be available
   }
   return DEFAULT_SFX_VOLUME
@@ -119,7 +119,7 @@ export const setBackgroundMusicVolume = (volume: number) => {
   // Persist to localStorage
   try {
     localStorage.setItem('slopes-bgm-volume', String(clampedVolume))
-  } catch (e) {
+  } catch {
     // localStorage might not be available
   }
   
@@ -203,7 +203,7 @@ export const setSfxVolume = (volume: number) => {
   // Persist to localStorage
   try {
     localStorage.setItem('slopes-sfx-volume', String(clampedVolume))
-  } catch (e) {
+  } catch {
     // localStorage might not be available
   }
   
