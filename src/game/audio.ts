@@ -57,7 +57,7 @@ export const startBackgroundMusic = () => {
       src: ['/backgroundmusic.mp3'],
       loop: true,
       volume: bgmVolume,
-      html5: true, // Use HTML5 Audio for streaming (better for music)
+      // Use Web Audio API for better volume control (html5: false is default)
     })
   } else {
     // Update volume to current setting
