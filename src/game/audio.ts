@@ -1,6 +1,8 @@
 // Background music management
 // The music starts playing when the player takes control and loops continuously.
 
+const DEFAULT_VOLUME = 0.5
+
 let audioElement: HTMLAudioElement | null = null
 
 /**
@@ -12,7 +14,7 @@ export const startBackgroundMusic = () => {
   if (!audioElement) {
     audioElement = new Audio('/backgroundmusic.mp3')
     audioElement.loop = true
-    audioElement.volume = 0.5 // Set a reasonable default volume
+    audioElement.volume = DEFAULT_VOLUME
   }
 
   // Start playing only if currently paused
