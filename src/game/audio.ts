@@ -4,6 +4,7 @@
 const DEFAULT_VOLUME = 0.5
 
 let audioElement: HTMLAudioElement | null = null
+let currentVolume = DEFAULT_VOLUME
 
 /**
  * Initialize and start background music.
@@ -14,7 +15,7 @@ export const startBackgroundMusic = () => {
   if (!audioElement) {
     audioElement = new Audio('/backgroundmusic.mp3')
     audioElement.loop = true
-    audioElement.volume = DEFAULT_VOLUME
+    audioElement.volume = currentVolume
   }
 
   // Start playing only if currently paused
@@ -51,6 +52,7 @@ export const resumeBackgroundMusic = () => {
  */
 export const setBackgroundMusicVolume = (volume: number) => {
   const clampedVolume = Math.max(0, Math.min(1, volume))
+  currentVolume = clampedVolume
   if (audioElement) {
     audioElement.volume = clampedVolume
   }
@@ -60,5 +62,5 @@ export const setBackgroundMusicVolume = (volume: number) => {
  * Get current background music volume (0.0 to 1.0).
  */
 export const getBackgroundMusicVolume = (): number => {
-  return audioElement?.volume ?? DEFAULT_VOLUME
+  return currentVolume
 }
