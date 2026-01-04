@@ -376,7 +376,8 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         const sign = delta >= 0 ? '+' : '-'
         const text = `${sign}${Math.abs(delta).toFixed(2)}s`
 
-        const gx = (pGhost.x - s.camera.x) * zoom + w / 2
+        // Convert ghost position to screen coordinates
+        let gx = (pGhost.x - s.camera.x) * zoom + w / 2
         const gy = (pGhost.y - s.camera.y) * zoom + h / 2
 
         ctx.save()
@@ -388,8 +389,39 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
         const padX = 10
         const bw = tw + padX * 2
         const bh = 22
+        
+        // Calculate pill dimensions and margins
+        const pillMargin = 20 // margin from screen edge
+        const pillOffsetY = 40 // offset above ghost
+        
+        // Clamp to screen bounds:
+        // - Lock horizontally when ghost goes off left/right edge
+        // - Maintain vertical position unless ghost also goes off vertically
+        // - Lock to appropriate corner when off-screen both horizontally and vertically
+        
+        // Check if ghost is off-screen horizontally
+        const halfW = bw / 2
+        if (gx - halfW < pillMargin) {
+          // Ghost is off-screen to the left
+          gx = pillMargin + halfW
+        } else if (gx + halfW > w - pillMargin) {
+          // Ghost is off-screen to the right
+          gx = w - pillMargin - halfW
+        }
+        
+        // Calculate vertical position (above ghost by default)
+        let by = gy - pillOffsetY - bh / 2
+        
+        // Check if ghost is off-screen vertically
+        if (by < pillMargin) {
+          // Ghost is off-screen at the top
+          by = pillMargin
+        } else if (by + bh > h - pillMargin) {
+          // Ghost is off-screen at the bottom
+          by = h - pillMargin - bh
+        }
+        
         const bx = gx - bw / 2
-        const by = gy - 40 - bh / 2
         ctx.fillStyle = 'rgba(10, 8, 22, 0.62)'
         ctx.strokeStyle = 'rgba(140, 190, 255, 0.25)'
         ctx.lineWidth = 2
@@ -420,7 +452,7 @@ export const drawFrame = (canvas: HTMLCanvasElement, s: RunState) => {
       const showPost = s.runStarted && t >= 0 && t < 2.0
       if (showPre || showPost) {
         const fade = !s.runStarted ? 1 : t < 1.5 ? 1 : clamp((2.0 - t) / 0.5, 0, 1)
-        const line1 = 'Tap to thrust'
+        const line1 = 'Tap/hold for vertical thrust'
         const line2 = 'Triple tap to reset'
         const x = w * 0.5
         const y = h * 0.30
