@@ -1,7 +1,7 @@
 // Audio management for background music and sound effects
 // The music starts playing when the player takes control and loops continuously.
 
-const DEFAULT_BGM_VOLUME = 0.5
+const DEFAULT_BGM_VOLUME = 0.33
 const DEFAULT_SFX_VOLUME = 0.5
 
 let bgmElement: HTMLAudioElement | null = null
@@ -173,4 +173,16 @@ export const setSfxVolume = (volume: number) => {
  */
 export const getSfxVolume = (): number => {
   return sfxVolume
+}
+
+/**
+ * Pause all SFX (used when app loses focus).
+ */
+export const pauseAllSfx = () => {
+  if (jetpackSfx && !jetpackSfx.paused) {
+    jetpackSfx.pause()
+  }
+  if (rollingballSfx && !rollingballSfx.paused) {
+    rollingballSfx.pause()
+  }
 }

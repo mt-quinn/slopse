@@ -33,6 +33,7 @@ import {
   stopJetpackSfx,
   playRollingballSfx,
   stopRollingballSfx,
+  pauseAllSfx,
 } from './game/audio'
 
 const fmtMs = (ms: number) => {
@@ -485,6 +486,7 @@ export default function App() {
     const onVisibilityChange = () => {
       if (document.hidden) {
         pauseBackgroundMusic()
+        pauseAllSfx()
       } else {
         // Try to resume - mobile browsers may block this
         resumeBackgroundMusic()
