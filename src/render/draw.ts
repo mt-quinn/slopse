@@ -45,30 +45,34 @@ const drawFlameJet = (
   const flameHeight = r * 1.8
   const flameWidth = r * 0.9
   
-  // Create a flame shape with 3 tongues
-  ctx.beginPath()
+  // Helper function to draw the flame path
+  const drawFlamePath = () => {
+    ctx.beginPath()
+    // Center flame tongue
+    ctx.moveTo(x, flameY)
+    ctx.quadraticCurveTo(x, flameY + flameHeight * 0.6, x, flameY + flameHeight)
+    
+    // Left flame tongue
+    ctx.moveTo(x - flameWidth * 0.4, flameY + flameHeight * 0.2)
+    ctx.quadraticCurveTo(
+      x - flameWidth * 0.5,
+      flameY + flameHeight * 0.6,
+      x - flameWidth * 0.3,
+      flameY + flameHeight * 0.85
+    )
+    
+    // Right flame tongue
+    ctx.moveTo(x + flameWidth * 0.4, flameY + flameHeight * 0.2)
+    ctx.quadraticCurveTo(
+      x + flameWidth * 0.5,
+      flameY + flameHeight * 0.6,
+      x + flameWidth * 0.3,
+      flameY + flameHeight * 0.85
+    )
+  }
   
-  // Center flame tongue
-  ctx.moveTo(x, flameY)
-  ctx.quadraticCurveTo(x, flameY + flameHeight * 0.6, x, flameY + flameHeight)
-  
-  // Left flame tongue
-  ctx.moveTo(x - flameWidth * 0.4, flameY + flameHeight * 0.2)
-  ctx.quadraticCurveTo(
-    x - flameWidth * 0.5,
-    flameY + flameHeight * 0.6,
-    x - flameWidth * 0.3,
-    flameY + flameHeight * 0.85
-  )
-  
-  // Right flame tongue
-  ctx.moveTo(x + flameWidth * 0.4, flameY + flameHeight * 0.2)
-  ctx.quadraticCurveTo(
-    x + flameWidth * 0.5,
-    flameY + flameHeight * 0.6,
-    x + flameWidth * 0.3,
-    flameY + flameHeight * 0.85
-  )
+  // Draw the main flame
+  drawFlamePath()
   
   // Style the flame
   if (isGhost) {
@@ -92,6 +96,7 @@ const drawFlameJet = (
   
   // Add a glow effect for the player's flame
   if (!isGhost) {
+    drawFlamePath()
     ctx.globalCompositeOperation = 'lighter'
     ctx.strokeStyle = 'rgba(255, 200, 80, 0.4)'
     ctx.lineWidth = 7
