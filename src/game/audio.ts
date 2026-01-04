@@ -19,7 +19,7 @@ export const startBackgroundMusic = () => {
   if (audioElement.paused) {
     audioElement.play().catch((err) => {
       // Browser may block autoplay - this is expected and handled gracefully
-      console.warn('Background music playback failed:', err)
+      console.warn('Background music playback failed (browser may have blocked autoplay):', err)
     })
   }
 }
