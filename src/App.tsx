@@ -20,6 +20,7 @@ import {
 } from './game/leaderboard'
 import { applyCameraDeath, updateRunCamera } from './game/camera'
 import { startRun } from './game/runControl'
+import { TrackGenTool } from './tools/TrackGenTool'
 import {
   startBackgroundMusic,
   pauseBackgroundMusic,
@@ -57,6 +58,15 @@ const medalLabel = (r: RunResult | null) => {
 }
 
 export default function App() {
+  // Lightweight "tool routing" without adding a router dependency.
+  // Usage: `/?tool=trackgen`
+  const toolMode = useMemo(() => {
+    if (typeof window === 'undefined') return null
+    const q = new URLSearchParams(window.location.search)
+    return q.get('tool')
+  }, [])
+  if (toolMode === 'trackgen') return <TrackGenTool />
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const rafRef = useRef<number | null>(null)
   const hudBucketRef = useRef<number>(-1)

@@ -12,6 +12,9 @@ export type TrackDef = {
   id: string
   name: string
   trackHash: string
+  // Constant per-track "plane" tilt applied after generation (degrees).
+  // 0 = current flat world; 30 = max downsloped plane.
+  planeDeg?: number
   start: { p: Vec2; v: Vec2 }
   finishX: number
   segments: TrackSegment[]
@@ -177,6 +180,58 @@ export const buildCatmullRomSegments = (ctrl: Vec2[], stepPx: number): TrackSegm
     const dx = b.x - a.x
     const dy = b.y - a.y
     if (dx * dx + dy * dy < 1e-6) continue
+    segs.push({ a, b, mat: 'normal' })
+  }
+  return segs
+}
+
+const catmullRom1d = (p0: number, p1: number, p2: number, p3: number, t: number) => {
+  const t2 = t * t
+  const t3 = t2 * t
+  return (
+    0.5 *
+    ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3)
+  )
+}
+
+// Forward-only (strictly increasing X) Catmull–Rom sampling:
+// - X is lerped between consecutive control points (monotonic).
+// - Y is Catmull–Rom over the y-values (smooth).
+// This prevents local backtracking/loops in X while keeping the "flowy" feel.
+export const buildForwardCatmullRomSegments = (ctrl: Vec2[], stepPx: number): TrackSegment[] => {
+  if (ctrl.length < 2) return []
+  const step = Math.max(4, stepPx)
+  const pts: Vec2[] = []
+
+  pts.push({ ...ctrl[0]! })
+  for (let i = 0; i < ctrl.length - 1; i++) {
+    const p0 = ctrl[i - 1] ?? ctrl[i]!
+    const p1 = ctrl[i]!
+    const p2 = ctrl[i + 1]!
+    const p3 = ctrl[i + 2] ?? ctrl[i + 1]!
+
+    const dx = p2.x - p1.x
+    const dy = p2.y - p1.y
+    const chord = Math.hypot(dx, dy)
+    const steps = Math.max(6, Math.ceil(chord / step))
+
+    for (let k = 1; k <= steps; k++) {
+      const t = k / steps
+      const x = p1.x + (p2.x - p1.x) * t
+      const y = catmullRom1d(p0.y, p1.y, p2.y, p3.y, t)
+      pts.push({ x, y })
+    }
+  }
+
+  const segs: TrackSegment[] = []
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1]!
+    const b = pts[i]!
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    if (dx * dx + dy * dy < 1e-6) continue
+    // Enforce strict forward progression (numerical safety).
+    if (b.x <= a.x + 1e-6) continue
     segs.push({ a, b, mat: 'normal' })
   }
   return segs
@@ -357,6 +412,61 @@ const generateDailyYs = (ctrlCount: number, dx: number, rng: ReturnType<typeof m
   return enforceGradeClamp(ys2, dx)
 }
 
+const segSlope = (s: TrackSegment) => {
+  const dx = s.b.x - s.a.x
+  const dy = s.b.y - s.a.y
+  return dy / Math.max(1e-6, dx)
+}
+
+const carveGapsAfterJumps = (segs: TrackSegment[], rng: ReturnType<typeof mkRng>, gapCount: number) => {
+  if (gapCount <= 0) return segs
+  if (segs.length < 120) return segs
+
+  // Remove short windows of segments to create discontinuities (jumps/pits).
+  // Constraint: discontinuities can only begin after an "uphill" jump ramp (kicker).
+  // Keep these reasonably spaced and away from the very start/end.
+  const windows: Array<{ a: number; b: number }> = []
+  const minSep = 220
+  const jumpSlopeThresh = -0.26 // uphill in y-down space (negative slope)
+  const minRampLen = 4
+  const maxLandingUphill = -0.08 // landing should not immediately be another strong uphill
+  let guard = 0
+  while (windows.length < gapCount && guard++ < 2000) {
+    const len = rng.int(16, 34)
+    const aMin = 60
+    const aMax = Math.max(aMin, segs.length - 60 - len)
+    const a = rng.int(aMin, aMax)
+
+    // Ensure we have an uphill ramp run ending at a-1.
+    let rampLen = 0
+    for (let j = a - 1; j >= 0; j--) {
+      if (segSlope(segs[j]!) <= jumpSlopeThresh) rampLen++
+      else break
+      if (rampLen >= minRampLen) break
+    }
+    if (rampLen < minRampLen) continue
+
+    // Ensure the landing segment is not a hard uphill immediately.
+    const landI = a + len + 1
+    if (landI >= segs.length) continue
+    const landSlope = segSlope(segs[landI]!)
+    if (landSlope < maxLandingUphill) continue
+
+    const b = a + len
+    if (windows.some((w) => Math.abs(w.a - a) < minSep || (a <= w.b && b >= w.a))) continue
+    windows.push({ a, b })
+  }
+  if (windows.length === 0) return segs
+
+  const kill = new Uint8Array(segs.length)
+  for (const w of windows) {
+    for (let i = w.a; i <= w.b && i < segs.length; i++) kill[i] = 1
+  }
+  const out: TrackSegment[] = []
+  for (let i = 0; i < segs.length; i++) if (!kill[i]) out.push(segs[i]!)
+  return out
+}
+
 const applyBoostWindows = (segs: TrackSegment[], rng: ReturnType<typeof mkRng>, boostCount: number) => {
   if (segs.length < 20) return
 
@@ -364,15 +474,9 @@ const applyBoostWindows = (segs: TrackSegment[], rng: ReturnType<typeof mkRng>, 
   const uphill: number[] = []
   const downhillMid: number[] = []
 
-  const slope = (s: TrackSegment) => {
-    const dx = s.b.x - s.a.x
-    const dy = s.b.y - s.a.y
-    return dy / Math.max(1e-6, dx)
-  }
-
   // Uphill candidates (dy/dx < 0).
   for (let i = 0; i < segs.length; i++) {
-    const m = slope(segs[i]!)
+    const m = segSlope(segs[i]!)
     if (m < -0.22) uphill.push(i)
   }
 
@@ -380,9 +484,9 @@ const applyBoostWindows = (segs: TrackSegment[], rng: ReturnType<typeof mkRng>, 
   const downThresh = 0.26
   let i = 0
   while (i < segs.length) {
-    while (i < segs.length && slope(segs[i]!) <= downThresh) i++
+    while (i < segs.length && segSlope(segs[i]!) <= downThresh) i++
     const start = i
-    while (i < segs.length && slope(segs[i]!) > downThresh) i++
+    while (i < segs.length && segSlope(segs[i]!) > downThresh) i++
     const end = i // exclusive
     const lenRun = end - start
     if (lenRun >= 18) downhillMid.push(start + Math.floor(lenRun / 2))
@@ -412,32 +516,90 @@ const applyBoostWindows = (segs: TrackSegment[], rng: ReturnType<typeof mkRng>, 
 
 export const makeDailyTrack = (dateKey = localDateKey()): TrackDef => {
   const seed = hash32(`${DAILY_TRACK_VERSION}:${dateKey}`)
+  return makeDailyTrackFromSeed(seed, { id: `daily-${dateKey}-v${DAILY_TRACK_VERSION}`, name: `Daily — ${dateKey}` })
+}
+
+export type DailyTrackGenOpts = {
+  enableGaps?: boolean
+  gapCount?: number | null // null/undefined => random
+  enableBoosts?: boolean
+  boostCount?: number | null // null/undefined => random
+  // Apply a global plane tilt after generation:
+  // - number: fixed degrees
+  // - null/undefined: random 1..30 deg
+  planeDeg?: number | null
+  // Finish distance range override (in px). If omitted, uses the doubled default.
+  finishX?: { min: number; max: number } | null
+}
+
+const applyPlaneTiltToSegments = (segs: TrackSegment[], planeDeg: number, origin: Vec2): TrackSegment[] => {
+  const deg = clamp(planeDeg, 0, 30)
+  if (deg <= 1e-6) return segs
+  const a = (deg * Math.PI) / 180
+  const s = Math.sin(a)
+  const c = Math.cos(a)
+  const x0 = origin.x
+  const y0 = origin.y
+  const tiltY = (p: Vec2): Vec2 => {
+    const x = p.x - x0
+    const y = p.y - y0
+    // "Rotate" the plane while keeping forward (x) as our progress axis:
+    // y' = y*cos(a) + x*sin(a)
+    return { x: p.x, y: y0 + y * c + x * s }
+  }
+  return segs.map((seg) => ({ a: tiltY(seg.a), b: tiltY(seg.b), mat: seg.mat }))
+}
+
+export const makeDailyTrackFromSeed = (
+  seed: number,
+  meta?: { id?: string; name?: string },
+  opts?: DailyTrackGenOpts,
+): TrackDef => {
   const rng = mkRng(seed)
 
-  // Target 30–60s feel: long, fast, and varied.
-  const finishX = rng.int(19000, 27500)
+  // Target ~60–120s feel: long, fast, and varied (default length doubled).
+  const fx = opts?.finishX
+  const finishX = fx ? rng.int(fx.min, fx.max) : rng.int(38000, 55000)
   const dx = rng.int(220, 290)
   const ctrlCount = Math.max(28, Math.floor(finishX / dx) + 1)
 
   const ys = generateDailyYs(ctrlCount, dx, rng)
   const ctrl: Vec2[] = ys.map((y, i) => ({ x: i * dx, y }))
 
-  const segments = buildCatmullRomSegments(ctrl, 16)
+  // Strictly forward-only geometry.
+  let segments = buildForwardCatmullRomSegments(ctrl, 16)
 
-  const boostCount = rng.int(1, 10)
-  applyBoostWindows(segments, rng, boostCount)
+  // Discontinuities (gaps/pits) while still progressing forward.
+  if (opts?.enableGaps ?? true) {
+    // Enforced: at least 1 discontinuity unless explicitly overridden to 0.
+    const gapCount = opts?.gapCount == null ? rng.int(1, 3) : Math.max(0, Math.floor(opts.gapCount))
+    segments = carveGapsAfterJumps(segments, rng, gapCount)
+  }
+
+  // Boost rails.
+  if (opts?.enableBoosts ?? true) {
+    // Enforced: at least a few boost windows unless explicitly overridden to 0.
+    const boostCount = opts?.boostCount == null ? rng.int(6, 16) : Math.max(0, Math.floor(opts.boostCount))
+    applyBoostWindows(segments, rng, boostCount)
+  }
+
+  // Apply a per-track plane tilt AFTER generation decisions (keeps "core gen" unchanged).
+  const planeDeg = opts?.planeDeg == null ? rng.int(1, 30) : clamp(opts.planeDeg, 0, 30)
+  segments = applyPlaneTiltToSegments(segments, planeDeg, ctrl[0]!)
 
   // Medals are currently not the focus; keep placeholders so sim can still compute a RunResult.
-  const goldMs = rng.int(34000, 56000)
+  const goldMs = rng.int(68000, 112000)
   const silverMs = Math.round(goldMs * 1.05)
   const bronzeMs = Math.round(goldMs * 1.1)
 
-  const id = `daily-${dateKey}-v${DAILY_TRACK_VERSION}`
+  const id = meta?.id ?? `seed-${hex8(seed)}-v${DAILY_TRACK_VERSION}`
+  const name = meta?.name ?? `Seed ${hex8(seed)}`
   const trackHash = hashTrackSegments(segments)
   return {
     id,
-    name: `Daily — ${dateKey}`,
+    name,
     trackHash,
+    planeDeg,
     start: { p: { x: 40, y: ctrl[0]!.y - 40 }, v: { x: 260, y: 0 } },
     finishX,
     segments,
